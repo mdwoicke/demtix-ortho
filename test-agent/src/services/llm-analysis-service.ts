@@ -1,0 +1,473 @@
+/**
+ * LLM Analysis Service
+ * Uses Claude API to analyze test failures and generate fix recommendations
+ */
+
+import Anthropic from '@anthropic-ai/sdk';
+import * as fs from 'fs';
+import * as path from 'path';
+import { config } from '../config/config';
+import { ConversationTurn, Finding } from '../tests/test-case';
+import { ApiCall } from '../storage/database';
+
+// ============================================================================
+// Types
+// ============================================================================
+
+export interface FailureContext {
+  testId: string;
+  testName: string;
+  stepId: string;
+  stepDescription: string;
+  expectedPattern: string;
+  unexpectedPatterns?: string[];
+  transcript: ConversationTurn[];
+  apiCalls: ApiCall[];
+  errorMessage?: string;
+  findings: Finding[];
+}
+
+export interface RootCause {
+  type: 'prompt-gap' | 'prompt-conflict' | 'tool-bug' |
+        'tool-missing-default' | 'llm-hallucination' | 'test-issue';
+  evidence: string[];
+  confidence: number;
+  explanation: string;
+}
+
+export interface PromptFix {
+  type: 'prompt';
+  fixType: 'add-rule' | 'add-example' | 'clarify-instruction' |
+           'ban-word' | 'add-phase-step' | 'fix-format-spec';
+  targetFile: string;
+  location: {
+    section: string;
+    afterLine?: string;
+    replaceLine?: string;
+  };
+  changeDescription: string;
+  changeCode: string;
+  priority: 'critical' | 'high' | 'medium' | 'low';
+  confidence: number;
+  reasoning: string;
+}
+
+export interface ToolFix {
+  type: 'tool';
+  fixType: 'add-default' | 'add-validation' | 'fix-parsing' |
+           'add-error-handling' | 'fix-parameter';
+  targetFile: string;
+  location: {
+    function?: string;
+    lineNumber?: number;
+    afterLine?: string;
+  };
+  changeDescription: string;
+  changeCode: string;
+  priority: 'critical' | 'high' | 'medium' | 'low';
+  confidence: number;
+  reasoning: string;
+}
+
+export interface AnalysisResult {
+  rootCause: RootCause;
+  fixes: (PromptFix | ToolFix)[];
+  summary: string;
+}
+
+// ============================================================================
+// LLM Analysis Service
+// ============================================================================
+
+export class LLMAnalysisService {
+  private client: Anthropic | null = null;
+  private systemPromptContent: string = '';
+  private schedulingToolContent: string = '';
+  private patientToolContent: string = '';
+
+  constructor() {
+    this.initializeClient();
+    this.loadSourceFiles();
+  }
+
+  private initializeClient(): void {
+    // Try multiple token sources
+    const token = process.env.CLAUDE_CODE_OAUTH_TOKEN ||
+                  process.env.ANTHROPIC_API_KEY;
+
+    if (token) {
+      this.client = new Anthropic({ apiKey: token });
+      const source = process.env.CLAUDE_CODE_OAUTH_TOKEN ? 'CLAUDE_CODE_OAUTH_TOKEN' : 'ANTHROPIC_API_KEY';
+      console.log(`[LLMAnalysisService] Initialized with ${source}`);
+    } else {
+      console.log('[LLMAnalysisService] No API token found (tried CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY)');
+      console.log('[LLMAnalysisService] LLM analysis disabled - using rule-based analysis only');
+    }
+  }
+
+  private loadSourceFiles(): void {
+    const baseDir = path.resolve(__dirname, '../..');
+
+    try {
+      const promptPath = path.resolve(baseDir, config.agentTuning.systemPromptPath);
+      if (fs.existsSync(promptPath)) {
+        this.systemPromptContent = fs.readFileSync(promptPath, 'utf-8');
+      }
+    } catch (e) {
+      console.warn('Could not load system prompt file');
+    }
+
+    try {
+      const schedulingPath = path.resolve(baseDir, config.agentTuning.schedulingToolPath);
+      if (fs.existsSync(schedulingPath)) {
+        this.schedulingToolContent = fs.readFileSync(schedulingPath, 'utf-8');
+      }
+    } catch (e) {
+      console.warn('Could not load scheduling tool file');
+    }
+
+    try {
+      const patientPath = path.resolve(baseDir, config.agentTuning.patientToolPath);
+      if (fs.existsSync(patientPath)) {
+        this.patientToolContent = fs.readFileSync(patientPath, 'utf-8');
+      }
+    } catch (e) {
+      console.warn('Could not load patient tool file');
+    }
+  }
+
+  /**
+   * Check if the service is available (API key configured)
+   */
+  isAvailable(): boolean {
+    return this.client !== null;
+  }
+
+  /**
+   * Analyze a test failure and generate fix recommendations
+   */
+  async analyzeFailure(context: FailureContext): Promise<AnalysisResult> {
+    if (!this.client) {
+      throw new Error('LLM Analysis Service not available - set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY');
+    }
+
+    const prompt = this.buildAnalysisPrompt(context);
+
+    try {
+      const response = await this.client.messages.create({
+        model: config.llmAnalysis.model,
+        max_tokens: config.llmAnalysis.maxTokens,
+        temperature: config.llmAnalysis.temperature,
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+      });
+
+      const responseText = response.content[0].type === 'text'
+        ? response.content[0].text
+        : '';
+
+      return this.parseAnalysisResponse(responseText, context);
+    } catch (error) {
+      console.error('LLM Analysis failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Analyze multiple failures and deduplicate fixes
+   */
+  async analyzeMultipleFailures(contexts: FailureContext[]): Promise<{
+    analyses: Map<string, AnalysisResult>;
+    deduplicatedFixes: (PromptFix | ToolFix)[];
+  }> {
+    const analyses = new Map<string, AnalysisResult>();
+    const allFixes: (PromptFix | ToolFix)[] = [];
+
+    for (const context of contexts) {
+      try {
+        const result = await this.analyzeFailure(context);
+        analyses.set(context.testId, result);
+        allFixes.push(...result.fixes);
+      } catch (error) {
+        console.error(`Failed to analyze ${context.testId}:`, error);
+      }
+    }
+
+    // Deduplicate fixes based on target file and change description
+    const deduplicatedFixes = this.deduplicateFixes(allFixes);
+
+    return { analyses, deduplicatedFixes };
+  }
+
+  private buildAnalysisPrompt(context: FailureContext): string {
+    const transcriptSummary = context.transcript
+      .slice(-10) // Last 10 turns
+      .map(t => `[${t.role}]: ${t.content.substring(0, 500)}${t.content.length > 500 ? '...' : ''}`)
+      .join('\n\n');
+
+    const apiCallsSummary = context.apiCalls
+      .slice(-5) // Last 5 API calls
+      .map(call => {
+        const req = call.requestPayload ? JSON.parse(call.requestPayload) : null;
+        const res = call.responsePayload ? JSON.parse(call.responsePayload) : null;
+        return `Tool: ${call.toolName}\nRequest: ${JSON.stringify(req, null, 2)?.substring(0, 300)}\nResponse: ${JSON.stringify(res, null, 2)?.substring(0, 300)}`;
+      })
+      .join('\n---\n');
+
+    const findingsSummary = context.findings
+      .map(f => `[${f.severity}] ${f.title}: ${f.description}`)
+      .join('\n');
+
+    return `You are an expert at debugging AI chatbot failures. You are analyzing a test failure for "Allie IVA", an orthodontic appointment scheduling chatbot.
+
+## SYSTEM PROMPT BEING TESTED (excerpt - key sections)
+${this.systemPromptContent.substring(0, 8000)}
+${this.systemPromptContent.length > 8000 ? '\n... [truncated]' : ''}
+
+## SCHEDULING TOOL CODE (excerpt)
+${this.schedulingToolContent.substring(0, 4000)}
+${this.schedulingToolContent.length > 4000 ? '\n... [truncated]' : ''}
+
+## PATIENT TOOL CODE (excerpt)
+${this.patientToolContent.substring(0, 4000)}
+${this.patientToolContent.length > 4000 ? '\n... [truncated]' : ''}
+
+---
+
+## TEST FAILURE DETAILS
+
+**Test:** ${context.testId} - ${context.testName}
+**Failed Step:** ${context.stepId} - ${context.stepDescription}
+**Error:** ${context.errorMessage || 'Pattern mismatch'}
+
+**Expected Pattern:** ${context.expectedPattern}
+${context.unexpectedPatterns ? `**Unexpected Patterns Found:** ${context.unexpectedPatterns.join(', ')}` : ''}
+
+## CONVERSATION TRANSCRIPT (last 10 turns)
+${transcriptSummary}
+
+## API/TOOL CALLS MADE
+${apiCallsSummary || 'No API calls recorded'}
+
+## EXISTING FINDINGS
+${findingsSummary || 'No findings recorded'}
+
+---
+
+## YOUR TASK
+
+1. **Identify the ROOT CAUSE** of this failure. Categorize it as one of:
+   - \`prompt-gap\`: Missing instruction in the system prompt
+   - \`prompt-conflict\`: Conflicting instructions in the system prompt
+   - \`tool-bug\`: Bug in the tool code (missing default, wrong parsing, etc.)
+   - \`tool-missing-default\`: Tool needs a default value for a parameter
+   - \`llm-hallucination\`: LLM generated unexpected response despite correct instructions
+   - \`test-issue\`: The test expectation is wrong, not the agent
+
+2. **Generate SPECIFIC FIXES** with:
+   - Target file (system prompt or tool file)
+   - Exact location (section name, function name, or line to insert after)
+   - Complete replacement/addition code
+   - Confidence score (0.0 to 1.0)
+   - Priority (critical, high, medium, low)
+
+3. Respond in this exact JSON format:
+\`\`\`json
+{
+  "rootCause": {
+    "type": "prompt-gap|prompt-conflict|tool-bug|tool-missing-default|llm-hallucination|test-issue",
+    "evidence": ["evidence 1", "evidence 2"],
+    "confidence": 0.85,
+    "explanation": "Brief explanation of why this is the root cause"
+  },
+  "fixes": [
+    {
+      "type": "prompt",
+      "fixType": "add-rule|add-example|clarify-instruction|ban-word|add-phase-step|fix-format-spec",
+      "targetFile": "docs/Chord_Cloud9_SystemPrompt.md",
+      "location": {
+        "section": "Phase 7: Scheduling",
+        "afterLine": "ALWAYS check availability before offering times"
+      },
+      "changeDescription": "Add rule to always mention checking availability",
+      "changeCode": "- ALWAYS say 'Let me check availability for you' before calling the slots API",
+      "priority": "high",
+      "confidence": 0.9,
+      "reasoning": "The agent skipped the availability check language"
+    }
+  ],
+  "summary": "One sentence summary of the issue and fix"
+}
+\`\`\`
+
+Be specific and actionable. Generate complete code that can be directly applied.`;
+  }
+
+  private parseAnalysisResponse(responseText: string, context: FailureContext): AnalysisResult {
+    // Extract JSON from response (handle markdown code blocks)
+    const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/) ||
+                      responseText.match(/\{[\s\S]*"rootCause"[\s\S]*\}/);
+
+    if (!jsonMatch) {
+      // Return a fallback result if parsing fails
+      return this.createFallbackResult(context, responseText);
+    }
+
+    try {
+      const jsonStr = jsonMatch[1] || jsonMatch[0];
+      const parsed = JSON.parse(jsonStr);
+
+      // Validate and normalize the parsed result
+      const rootCause: RootCause = {
+        type: parsed.rootCause?.type || 'prompt-gap',
+        evidence: parsed.rootCause?.evidence || [],
+        confidence: parsed.rootCause?.confidence || 0.5,
+        explanation: parsed.rootCause?.explanation || 'Unknown',
+      };
+
+      const fixes: (PromptFix | ToolFix)[] = (parsed.fixes || []).map((fix: any) => {
+        if (fix.type === 'prompt') {
+          return {
+            type: 'prompt' as const,
+            fixType: fix.fixType || 'add-rule',
+            targetFile: fix.targetFile || 'docs/Chord_Cloud9_SystemPrompt.md',
+            location: fix.location || { section: 'Unknown' },
+            changeDescription: fix.changeDescription || '',
+            changeCode: fix.changeCode || '',
+            priority: fix.priority || 'medium',
+            confidence: fix.confidence || 0.5,
+            reasoning: fix.reasoning || '',
+          } as PromptFix;
+        } else {
+          return {
+            type: 'tool' as const,
+            fixType: fix.fixType || 'add-default',
+            targetFile: fix.targetFile || 'docs/chord_dso_scheduling-StepwiseSearch.js',
+            location: fix.location || {},
+            changeDescription: fix.changeDescription || '',
+            changeCode: fix.changeCode || '',
+            priority: fix.priority || 'medium',
+            confidence: fix.confidence || 0.5,
+            reasoning: fix.reasoning || '',
+          } as ToolFix;
+        }
+      });
+
+      return {
+        rootCause,
+        fixes,
+        summary: parsed.summary || 'Analysis complete',
+      };
+    } catch (error) {
+      return this.createFallbackResult(context, responseText);
+    }
+  }
+
+  private createFallbackResult(context: FailureContext, responseText: string): AnalysisResult {
+    return {
+      rootCause: {
+        type: 'prompt-gap',
+        evidence: ['Unable to parse LLM response'],
+        confidence: 0.3,
+        explanation: `Analysis failed to parse. Raw response excerpt: ${responseText.substring(0, 500)}`,
+      },
+      fixes: [],
+      summary: 'Analysis failed - manual review required',
+    };
+  }
+
+  private deduplicateFixes(fixes: (PromptFix | ToolFix)[]): (PromptFix | ToolFix)[] {
+    const seen = new Map<string, PromptFix | ToolFix>();
+
+    for (const fix of fixes) {
+      const key = `${fix.targetFile}:${fix.changeDescription}`;
+      const existing = seen.get(key);
+
+      if (!existing || fix.confidence > existing.confidence) {
+        seen.set(key, fix);
+      }
+    }
+
+    // Sort by confidence descending
+    return Array.from(seen.values()).sort((a, b) => b.confidence - a.confidence);
+  }
+
+  /**
+   * Generate a quick analysis without full LLM call (for testing/fallback)
+   */
+  generateRuleBasedAnalysis(context: FailureContext): AnalysisResult {
+    const fixes: (PromptFix | ToolFix)[] = [];
+    let rootCauseType: RootCause['type'] = 'prompt-gap';
+    const evidence: string[] = [];
+
+    // Check for common patterns
+    const lastAssistantMessage = context.transcript
+      .filter(t => t.role === 'assistant')
+      .pop()?.content || '';
+
+    // Check for banned words
+    const bannedWords = ['sorry', 'error', 'problem', 'unable', 'cannot', 'failed'];
+    for (const word of bannedWords) {
+      if (lastAssistantMessage.toLowerCase().includes(word)) {
+        evidence.push(`Agent used banned word: "${word}"`);
+        fixes.push({
+          type: 'prompt',
+          fixType: 'ban-word',
+          targetFile: 'docs/Chord_Cloud9_SystemPrompt.md',
+          location: { section: 'Positive_Language_Rule' },
+          changeDescription: `Add explicit ban for "${word}"`,
+          changeCode: `- NEVER say "${word}" - use positive alternatives instead`,
+          priority: 'high',
+          confidence: 0.9,
+          reasoning: `Agent used banned word "${word}" in response`,
+        });
+      }
+    }
+
+    // Check for tool issues in API calls
+    for (const call of context.apiCalls) {
+      if (call.responsePayload?.includes('error') || call.status === 'error') {
+        rootCauseType = 'tool-bug';
+        evidence.push(`Tool call ${call.toolName} returned error`);
+
+        // Check for common parameter issues
+        const request = call.requestPayload ? JSON.parse(call.requestPayload) : {};
+        if (request.appointmentTypeGUID === '' || request.appointmentTypeGUID === null) {
+          fixes.push({
+            type: 'tool',
+            fixType: 'add-default',
+            targetFile: 'docs/chord_dso_scheduling-StepwiseSearch.js',
+            location: { function: 'book_child' },
+            changeDescription: 'Add default appointmentTypeGUID',
+            changeCode: `const appointmentTypeGUID = params.appointmentTypeGUID || CLOUD9.defaultApptTypeGUID;`,
+            priority: 'critical',
+            confidence: 0.95,
+            reasoning: 'Empty appointmentTypeGUID causing booking failure',
+          });
+        }
+      }
+    }
+
+    return {
+      rootCause: {
+        type: rootCauseType,
+        evidence,
+        confidence: evidence.length > 0 ? 0.7 : 0.3,
+        explanation: evidence.length > 0
+          ? evidence.join('; ')
+          : 'No specific pattern detected - manual review needed',
+      },
+      fixes,
+      summary: fixes.length > 0
+        ? `Found ${fixes.length} potential fix(es) based on pattern analysis`
+        : 'No automatic fixes generated - LLM analysis recommended',
+    };
+  }
+}
+
+// Singleton instance
+export const llmAnalysisService = new LLMAnalysisService();
