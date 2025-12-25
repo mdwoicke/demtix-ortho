@@ -200,7 +200,12 @@ export const PRESET_CONSTRAINTS = {
     type: 'must_not_happen',
     description: 'No internal system information should be exposed',
     condition: (ctx) => ctx.conversationHistory.some(
-      t => t.role === 'assistant' && /\b(null|undefined|exception|stack|trace|\[object)\b/i.test(t.content)
+      t => t.role === 'assistant' && (
+        // Check for error-like patterns (not JSON values like ": null")
+        /\b(exception|stack\s*trace|\[object\s*object\]|TypeError|ReferenceError|SyntaxError)\b/i.test(t.content) ||
+        // Check for null/undefined in error contexts (not as JSON values)
+        /(?<!["':])\s*\b(null|undefined)\b(?!\s*[,}\]])/i.test(t.content)
+      )
     ),
     severity: 'critical',
   }),
