@@ -193,10 +193,12 @@ Return ONLY a JSON object (no markdown, no explanation):
 - asking_child_count, asking_child_name, asking_child_dob, asking_child_age
 - asking_new_patient, asking_previous_visit, asking_previous_ortho
 - asking_insurance, asking_special_needs, asking_time_preference, asking_location_preference
-- confirming_information, confirming_spelling
+- confirming_information, confirming_spelling, asking_proceed_confirmation
 - offering_time_slots, confirming_booking
 - initiating_transfer, handling_error, asking_clarification
 - unknown
+
+Note: Use asking_proceed_confirmation when agent asks "Would you like to proceed anyway?" (e.g., for out-of-network insurance)
 
 ## Guidelines
 - Choose the MOST SPECIFIC intent that matches

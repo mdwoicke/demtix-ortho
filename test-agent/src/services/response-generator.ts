@@ -145,6 +145,7 @@ const RESPONSE_TEMPLATES: Partial<Record<AgentIntent, ResponseTemplate>> = {
   // Confirmations
   'confirming_information': () => 'Yes, that\'s correct',
   'confirming_spelling': () => 'Yes, that\'s right',
+  'asking_proceed_confirmation': () => 'Yes, please proceed anyway',
 
   // Booking flow
   'offering_time_slots': () => 'Yes, that time works',

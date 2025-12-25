@@ -38,6 +38,7 @@ export type AgentIntent =
   // Confirmations
   | 'confirming_information'
   | 'confirming_spelling'
+  | 'asking_proceed_confirmation'  // "Would you like to proceed anyway?" (e.g., out-of-network insurance)
 
   // Booking flow
   | 'offering_time_slots'
@@ -126,6 +127,12 @@ export const INTENT_KEYWORDS: Record<AgentIntent, RegExp[]> = {
 
   'confirming_information': [/\b(confirm|correct|verify|got it|thank you)\b/i],
   'confirming_spelling': [/\b(spelled|s-\w+-\w+)\b/i],
+  'asking_proceed_confirmation': [
+    /\bwould you like to proceed\b/i,
+    /\bdo you (still )?want to (proceed|continue)\b/i,
+    /\bnot in.?network\b.*\b(proceed|continue|anyway)\b/i,
+    /\b(proceed|continue) anyway\b/i,
+  ],
 
   'offering_time_slots': [/\b(available|slot|opening|can see you)\b/i],
   'confirming_booking': [/\b(booked|scheduled|confirmed|appointment.*set)\b/i],
