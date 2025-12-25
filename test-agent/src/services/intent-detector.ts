@@ -44,7 +44,7 @@ export interface IntentDetectorConfig {
 
 const DEFAULT_CONFIG: IntentDetectorConfig = {
   useLlm: true,
-  model: 'claude-sonnet-4-20250514',
+  model: 'claude-3-5-haiku-20241022', // Using Haiku for faster intent detection
   temperature: 0.1,
   maxTokens: 512,
   timeout: 15000,

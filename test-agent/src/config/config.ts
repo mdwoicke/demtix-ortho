@@ -37,7 +37,7 @@ export const config = {
   // LLM Analysis Configuration (for Dynamic Agent Tuning)
   llmAnalysis: {
     provider: 'anthropic' as const,
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-opus-4-5-20251101', // Using Opus 4.5 for deep analysis and fix recommendations
     maxTokens: 4096,
     temperature: 0.2,  // Low for consistent analysis
     apiKeyEnvVar: 'CLAUDE_CODE_OAUTH_TOKEN',  // Use Claude Code OAuth token
