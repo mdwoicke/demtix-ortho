@@ -67,3 +67,4 @@ export { TestRunHistory } from './TestRunHistory';
 export { AgentTuning } from './AgentTuning';
 export { TestCasesPage } from './TestCasesPage';
 export { GoalTestCasesPage } from './GoalTestCasesPage';
+export { GoalTestsDashboard } from './GoalTestsDashboard';
