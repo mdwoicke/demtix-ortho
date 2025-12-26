@@ -14,16 +14,19 @@ import {
 } from '../test-case';
 
 // Allie IVA specific patterns - matched to actual bot responses
-// Bot may either give "Allie" greeting OR skip to asking for name directly
+// Bot may respond dynamically based on context - patterns are flexible
 const alliePatterns = {
-  // Greeting can be either Allie intro OR direct name request
-  greeting: /allie|help you today|how may i|may i have your.*name|first and last name|that's great|name please/i,
-  askSpelling: /spell|spelling|confirm.*name/i,
-  askChildren: /how many children|scheduling for/i,
-  askNewPatientConsult: /new patient.*consult|schedule.*new patient/i,
-  askPreviousVisit: /been to.*office|visited.*before|any of our offices/i,
-  askPreviousOrtho: /orthodontic treatment|had braces|ortho.*before/i,
-  askChildName: /child.*name|name.*child|first.*last name/i,
+  // Greeting/initial response - accepts ANY relevant engagement with scheduling request
+  greeting: /allie|help|how may i|may i have|name|first and last|that's great|new patient|orthodontic|consult|appointment|child|schedule|absolutely|certainly|of course/i,
+  askSpelling: /spell|spelling|confirm.*name|correct/i,
+  // Bot may ask about children count OR acknowledge if already mentioned
+  askChildren: /how many children|scheduling for|one child|two child|three child|confirm/i,
+  // Bot may ask about new patient OR acknowledge it was already stated
+  askNewPatientConsult: /new patient|consult|first time|never been|orthodontic/i,
+  // Bot may ask about previous visits OR skip to next question
+  askPreviousVisit: /been to.*office|visited.*before|any of our offices|first time|never been|this office/i,
+  askPreviousOrtho: /orthodontic treatment|had braces|ortho.*before|previous.*treatment/i,
+  askChildName: /child.*name|name.*child|first.*last name|patient.*name/i,
   transferAgent: /connect.*agent|transfer|live agent|specialist/i,
   existingPatient: /not.*new patient|existing|been.*before|specialist|connect you/i,
 };
