@@ -1,7 +1,7 @@
 /**
  * Semantic Evaluator Service
  *
- * Uses Claude API to perform semantic analysis of chatbot responses,
+ * Uses Claude API or CLI to perform semantic analysis of chatbot responses,
  * replacing brittle regex patterns with AI-powered understanding.
  *
  * Modes:
@@ -10,7 +10,6 @@
  * - failures-only: Only use LLM for failed tests (lowest cost)
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import { createHash } from 'crypto';
 import { config } from '../config/config';
 import {
@@ -20,6 +19,8 @@ import {
   SemanticExpectation,
   NegativeExpectation,
 } from '../schemas/evaluation-schemas';
+import { getLLMProvider, LLMProvider } from '../../../shared/services/llm-provider';
+import { isClaudeCliEnabled } from '../../../shared/config/llm-config';
 
 // =============================================================================
 // Types
@@ -46,12 +47,12 @@ interface CacheEntry {
 // =============================================================================
 
 export class SemanticEvaluator {
-  private client: Anthropic | null = null;
+  private llmProvider: LLMProvider;
   private cache: Map<string, CacheEntry> = new Map();
-  private config: EvaluatorConfig;
+  private evaluatorConfig: EvaluatorConfig;
 
   constructor(evaluatorConfig?: Partial<EvaluatorConfig>) {
-    this.config = {
+    this.evaluatorConfig = {
       enabled: evaluatorConfig?.enabled ?? true,
       mode: evaluatorConfig?.mode ?? 'failures-only',
       fallbackToRegex: evaluatorConfig?.fallbackToRegex ?? true,
@@ -62,18 +63,17 @@ export class SemanticEvaluator {
       timeout: evaluatorConfig?.timeout ?? 30000,
     };
 
-    this.initializeClient();
+    this.llmProvider = getLLMProvider();
+    this.logInitialization();
   }
 
-  private initializeClient(): void {
-    const token = process.env.CLAUDE_CODE_OAUTH_TOKEN ||
-                  process.env.ANTHROPIC_API_KEY;
-
-    if (token) {
-      this.client = new Anthropic({ apiKey: token });
-      console.log('[SemanticEvaluator] Initialized with API token');
+  private async logInitialization(): Promise<void> {
+    const mode = isClaudeCliEnabled() ? 'CLI' : 'API';
+    const status = await this.llmProvider.checkAvailability();
+    if (status.available) {
+      console.log(`[SemanticEvaluator] Initialized with ${mode} mode (provider: ${status.provider})`);
     } else {
-      console.log('[SemanticEvaluator] No API token found - will use regex fallback');
+      console.log(`[SemanticEvaluator] ${mode} mode not available - will use regex fallback`);
     }
   }
 
@@ -81,14 +81,14 @@ export class SemanticEvaluator {
    * Check if LLM-based evaluation is available
    */
   isAvailable(): boolean {
-    return this.client !== null && this.config.enabled;
+    return this.llmProvider.isAvailable() && this.evaluatorConfig.enabled;
   }
 
   /**
    * Get the current evaluation mode
    */
   getMode(): 'realtime' | 'batch' | 'failures-only' {
-    return this.config.mode;
+    return this.evaluatorConfig.mode;
   }
 
   /**
@@ -98,36 +98,40 @@ export class SemanticEvaluator {
     const startTime = Date.now();
 
     // Check cache first
-    if (this.config.cacheEnabled) {
+    if (this.evaluatorConfig.cacheEnabled) {
       const cached = this.getCachedEvaluation(context);
       if (cached) {
         return cached;
       }
     }
 
-    // If LLM not available, use fallback
-    if (!this.client || !this.config.enabled) {
+    // Check if LLM is available
+    const status = await this.llmProvider.checkAvailability();
+    if (!status.available || !this.evaluatorConfig.enabled) {
       return this.fallbackEvaluation(context, startTime);
     }
 
     try {
       const prompt = this.buildEvaluationPrompt(context);
 
-      const response = await this.client.messages.create({
+      const response = await this.llmProvider.execute({
+        prompt,
         model: config.llmAnalysis.model,
-        max_tokens: 2048,
+        maxTokens: 2048,
         temperature: 0.1, // Low for consistent evaluation
-        messages: [{ role: 'user', content: prompt }],
+        timeout: this.evaluatorConfig.timeout,
       });
 
-      const responseText = response.content[0].type === 'text'
-        ? response.content[0].text
-        : '';
+      if (!response.success) {
+        console.error('[SemanticEvaluator] LLM call failed:', response.error);
+        return this.fallbackEvaluation(context, startTime);
+      }
 
+      const responseText = response.content || '';
       const evaluation = this.parseAndValidate(responseText, context, startTime);
 
       // Cache the result
-      if (this.config.cacheEnabled) {
+      if (this.evaluatorConfig.cacheEnabled) {
         this.cacheEvaluation(context, evaluation);
       }
 
@@ -145,8 +149,9 @@ export class SemanticEvaluator {
   async evaluateBatch(contexts: EvaluationContext[]): Promise<SemanticEvaluation[]> {
     if (contexts.length === 0) return [];
 
-    // If LLM not available, fall back for all
-    if (!this.client || !this.config.enabled) {
+    // Check if LLM is available
+    const status = await this.llmProvider.checkAvailability();
+    if (!status.available || !this.evaluatorConfig.enabled) {
       return contexts.map(ctx => this.fallbackEvaluation(ctx, Date.now()));
     }
 
@@ -154,8 +159,8 @@ export class SemanticEvaluator {
     const evaluations: SemanticEvaluation[] = [];
 
     // Process in batches to avoid token limits
-    for (let i = 0; i < contexts.length; i += this.config.batchSize) {
-      const batch = contexts.slice(i, i + this.config.batchSize);
+    for (let i = 0; i < contexts.length; i += this.evaluatorConfig.batchSize) {
+      const batch = contexts.slice(i, i + this.evaluatorConfig.batchSize);
       const batchResults = await this.evaluateBatchInternal(batch, startTime);
       evaluations.push(...batchResults);
     }
@@ -171,17 +176,20 @@ export class SemanticEvaluator {
     const prompt = this.buildBatchPrompt(contexts);
 
     try {
-      const response = await this.client!.messages.create({
+      const response = await this.llmProvider.execute({
+        prompt,
         model: config.llmAnalysis.model,
-        max_tokens: 4096,
+        maxTokens: 4096,
         temperature: 0.1,
-        messages: [{ role: 'user', content: prompt }],
+        timeout: this.evaluatorConfig.timeout,
       });
 
-      const responseText = response.content[0].type === 'text'
-        ? response.content[0].text
-        : '';
+      if (!response.success) {
+        console.error('[SemanticEvaluator] Batch evaluation failed:', response.error);
+        return contexts.map(ctx => this.fallbackEvaluation(ctx, overallStartTime));
+      }
 
+      const responseText = response.content || '';
       return this.parseBatchResponse(responseText, contexts, overallStartTime);
 
     } catch (error) {
@@ -482,14 +490,25 @@ Return ONLY the JSON array.`;
     // Words that may indicate issues but don't fail the test (used for low severity warnings only)
     const hasSoftWarnings = /i'm sorry|apologize|unfortunately|issue with/i.test(response);
 
+    // Helper to parse regex literal strings like "/.+/i" into RegExp
+    const parseRegexString = (str: string): RegExp => {
+      // Check if it looks like a regex literal: /pattern/flags
+      const regexLiteralMatch = str.match(/^\/(.+)\/([gimsuy]*)$/);
+      if (regexLiteralMatch) {
+        return new RegExp(regexLiteralMatch[1], regexLiteralMatch[2] || 'i');
+      }
+      // Otherwise treat as plain regex pattern
+      return new RegExp(str, 'i');
+    };
+
     // Check expected patterns
     const matchedExpectations: string[] = [];
     const unmatchedExpectations: string[] = [];
 
     for (const expected of context.expectedBehaviors) {
       try {
-        // Try to use it as a regex pattern
-        const pattern = new RegExp(expected, 'i');
+        // Try to use it as a regex pattern (handles /pattern/flags format)
+        const pattern = parseRegexString(expected);
         if (pattern.test(context.assistantResponse)) {
           matchedExpectations.push(expected);
         } else {
@@ -509,7 +528,7 @@ Return ONLY the JSON array.`;
     const unexpectedBehaviors: string[] = [];
     for (const unexpected of context.unexpectedBehaviors) {
       try {
-        const pattern = new RegExp(unexpected, 'i');
+        const pattern = parseRegexString(unexpected);
         if (pattern.test(context.assistantResponse)) {
           unexpectedBehaviors.push(unexpected);
         }
@@ -600,7 +619,7 @@ Return ONLY the JSON array.`;
     const key = this.getCacheKey(context);
     const entry = this.cache.get(key);
 
-    if (entry && (Date.now() - entry.timestamp) < this.config.cacheTTLMs) {
+    if (entry && (Date.now() - entry.timestamp) < this.evaluatorConfig.cacheTTLMs) {
       return entry.evaluation;
     }
 
@@ -644,7 +663,7 @@ Return ONLY the JSON array.`;
   getCacheStats(): { size: number; enabled: boolean } {
     return {
       size: this.cache.size,
-      enabled: this.config.cacheEnabled,
+      enabled: this.evaluatorConfig.cacheEnabled,
     };
   }
 }

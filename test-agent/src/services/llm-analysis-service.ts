@@ -1,14 +1,15 @@
 /**
  * LLM Analysis Service
- * Uses Claude API to analyze test failures and generate fix recommendations
+ * Uses Claude API or CLI to analyze test failures and generate fix recommendations
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import * as fs from 'fs';
 import * as path from 'path';
 import { config } from '../config/config';
 import { ConversationTurn, Finding } from '../tests/test-case';
 import { ApiCall } from '../storage/database';
+import { getLLMProvider, LLMProvider } from '../../../shared/services/llm-provider';
+import { isClaudeCliEnabled } from '../../../shared/config/llm-config';
 
 // ============================================================================
 // Types
@@ -80,27 +81,24 @@ export interface AnalysisResult {
 // ============================================================================
 
 export class LLMAnalysisService {
-  private client: Anthropic | null = null;
+  private llmProvider: LLMProvider;
   private systemPromptContent: string = '';
   private schedulingToolContent: string = '';
   private patientToolContent: string = '';
 
   constructor() {
-    this.initializeClient();
+    this.llmProvider = getLLMProvider();
     this.loadSourceFiles();
+    this.logInitialization();
   }
 
-  private initializeClient(): void {
-    // Try multiple token sources
-    const token = process.env.CLAUDE_CODE_OAUTH_TOKEN ||
-                  process.env.ANTHROPIC_API_KEY;
-
-    if (token) {
-      this.client = new Anthropic({ apiKey: token });
-      const source = process.env.CLAUDE_CODE_OAUTH_TOKEN ? 'CLAUDE_CODE_OAUTH_TOKEN' : 'ANTHROPIC_API_KEY';
-      console.log(`[LLMAnalysisService] Initialized with ${source}`);
+  private async logInitialization(): Promise<void> {
+    const mode = isClaudeCliEnabled() ? 'CLI' : 'API';
+    const status = await this.llmProvider.checkAvailability();
+    if (status.available) {
+      console.log(`[LLMAnalysisService] Initialized with ${mode} mode (provider: ${status.provider})`);
     } else {
-      console.log('[LLMAnalysisService] No API token found (tried CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY)');
+      console.log(`[LLMAnalysisService] ${mode} mode configured but not available: ${status.error}`);
       console.log('[LLMAnalysisService] LLM analysis disabled - using rule-based analysis only');
     }
   }
@@ -137,41 +135,51 @@ export class LLMAnalysisService {
   }
 
   /**
-   * Check if the service is available (API key configured)
+   * Check if the service is available (API key or CLI configured)
    */
   isAvailable(): boolean {
-    return this.client !== null;
+    return this.llmProvider.isAvailable();
   }
 
   /**
    * Analyze a test failure and generate fix recommendations
    */
   async analyzeFailure(context: FailureContext): Promise<AnalysisResult> {
-    if (!this.client) {
-      throw new Error('LLM Analysis Service not available - set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY');
+    const status = await this.llmProvider.checkAvailability();
+    if (!status.available) {
+      throw new Error(`LLM Analysis Service not available: ${status.error}`);
     }
 
     const prompt = this.buildAnalysisPrompt(context);
 
     try {
-      const response = await this.client.messages.create({
+      const response = await this.llmProvider.execute({
+        prompt,
         model: config.llmAnalysis.model,
-        max_tokens: config.llmAnalysis.maxTokens,
+        maxTokens: config.llmAnalysis.maxTokens,
         temperature: config.llmAnalysis.temperature,
-        messages: [
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
+        timeout: config.llmAnalysis.timeout,
       });
 
-      const responseText = response.content[0].type === 'text'
-        ? response.content[0].text
-        : '';
+      if (!response.success) {
+        // Handle timeout or other errors
+        if (response.error?.includes('timeout')) {
+          console.error(`LLM Analysis timed out after ${config.llmAnalysis.timeout}ms - falling back to rule-based analysis`);
+          return this.generateRuleBasedAnalysis(context);
+        }
+        throw new Error(response.error || 'LLM Analysis failed');
+      }
+
+      const responseText = response.content || '';
+      console.log(`[LLMAnalysisService] Analysis completed via ${response.provider} in ${response.durationMs}ms`);
 
       return this.parseAnalysisResponse(responseText, context);
-    } catch (error) {
+    } catch (error: any) {
+      // Handle timeout specifically
+      if (error.message?.includes('timeout')) {
+        console.error(`LLM Analysis timed out after ${config.llmAnalysis.timeout}ms - falling back to rule-based analysis`);
+        return this.generateRuleBasedAnalysis(context);
+      }
       console.error('LLM Analysis failed:', error);
       throw error;
     }
