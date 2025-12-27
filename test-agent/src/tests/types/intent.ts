@@ -109,7 +109,12 @@ export const INTENT_KEYWORDS: Record<AgentIntent, RegExp[]> = {
 
   'asking_parent_name': [/\b(your name|first and last name|full name)\b/i, /\bmay i have your.*name\b/i],
   'asking_spell_name': [/\b(spell|spelling|s-p-e-l-l)\b/i],
-  'asking_phone': [/\b(phone|number|reach you|contact)\b/i],
+  'asking_phone': [
+    /\b(phone|number|reach you|contact)\b/i,
+    /\bbest number\b/i,           // "is that the best number to reach you?"
+    /\bnumber is ending\b/i,      // "your number is ending in..."
+    /\bcaller id\b/i,             // references to caller ID
+  ],
   'asking_email': [/\b(email|e-mail)\b/i],
 
   'asking_child_count': [/\b(how many|number of).*child/i, /\bchildren.*coming in\b/i],
@@ -171,24 +176,25 @@ const INTENT_PRIORITY_ORDER: AgentIntent[] = [
   'saying_goodbye',
   'initiating_transfer',
 
-  // Specific confirmations
-  'asking_proceed_confirmation',
-  'confirming_spelling',
-  'confirming_information',
-
   // Booking flow - check searching BEFORE offering
   'searching_availability',
   'offering_time_slots',
 
-  // Specific questions (most specific first)
+  // Specific questions - check BEFORE confirmations to avoid misclassification
+  // (e.g., "is that the best number to reach you?" should be asking_phone, not confirming_information)
   'asking_spell_name',
+  'asking_phone',  // Phone confirmation from caller ID should map here
+  'asking_email',
   'asking_child_dob',
   'asking_child_age',
   'asking_child_name',
   'asking_child_count',
   'asking_parent_name',
-  'asking_phone',
-  'asking_email',
+
+  // Specific confirmations - check AFTER specific questions
+  'asking_proceed_confirmation',
+  'confirming_spelling',
+  'confirming_information',
 
   // Patient status
   'asking_new_patient',
