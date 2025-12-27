@@ -1,0 +1,1 @@
+cd test-agent && npm run test:goal

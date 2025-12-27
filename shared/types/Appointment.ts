@@ -28,6 +28,7 @@ export interface Appointment {
   location_code?: string;
   location_name?: string;
   environment?: string;
+  scheduled_at?: string; // ISO timestamp of when the appointment was booked/created
 
   // Legacy fields for backward compatibility
   guid?: string;

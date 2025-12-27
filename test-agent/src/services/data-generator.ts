@@ -299,10 +299,10 @@ export class DataGeneratorService {
   private generateDate(constraints: FieldConstraints): string {
     const from = constraints.minDate
       ? new Date(constraints.minDate)
-      : new Date('2025-01-01');
+      : new Date('2026-01-01');
     const to = constraints.maxDate
       ? new Date(constraints.maxDate)
-      : new Date('2025-12-31');
+      : new Date('2026-12-31');
 
     return faker.date.between({ from, to }).toISOString().split('T')[0];
   }

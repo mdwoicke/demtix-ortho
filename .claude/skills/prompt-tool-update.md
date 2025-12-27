@@ -1,11 +1,11 @@
+---
+name: prompt-tool-update
+description: Update Allie IVA prompts and tools with version control and Flowise deployment
+---
+
 # Prompt & Tool Update Skill
 
-## Skill Metadata
-- **Name**: `prompt-tool-update`
-- **Trigger Hints**: "update prompt", "add rule", "fix prompt", "create version", "sync to flowise", "prompt version", "update tool"
-- **Description**: Update Allie IVA prompts and tools with version control and Flowise deployment
-
----
+**Trigger Hints**: "update prompt", "add rule", "fix prompt", "create version", "sync to flowise", "prompt version", "update tool"
 
 ## ⚠️ CRITICAL: Get Latest File Paths First
 

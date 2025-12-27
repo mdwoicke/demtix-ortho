@@ -59,7 +59,10 @@ type CollectableFieldDTO =
   | 'parent_name' | 'parent_name_spelling' | 'parent_phone' | 'parent_email'
   | 'child_count' | 'child_names' | 'child_dob' | 'child_age'
   | 'is_new_patient' | 'previous_visit' | 'previous_ortho'
-  | 'insurance' | 'special_needs' | 'time_preference' | 'location_preference';
+  | 'insurance' | 'insurance_group_id' | 'insurance_member_id' | 'insurance_in_network'
+  | 'special_needs' | 'time_preference' | 'location_preference'
+  | 'address_provided' | 'parking_info' | 'hours_info'
+  | 'court_docs_mentioned' | 'early_arrival_mentioned' | 'card_reminder';
 
 type GoalTypeDTO =
   | 'data_collection'
@@ -146,8 +149,8 @@ const STANDARD_DATA_COLLECTION_GOALS: ConversationGoalDTO[] = [
   {
     id: 'collect-patient-status',
     type: 'data_collection',
-    description: 'Confirm new patient status and history',
-    requiredFields: ['is_new_patient', 'previous_visit', 'previous_ortho'],
+    description: 'Confirm patient history (previous visit implies new patient status)',
+    requiredFields: ['previous_visit', 'previous_ortho'],
     priority: 3,
     required: true,
   },
@@ -382,7 +385,7 @@ const goalTestCases: GoalTestCase[] = [
     constraints: [NO_ERRORS_CONSTRAINT, MAX_TURNS_20],
     responseConfig: {
       maxTurns: 20,
-      useLlmResponses: true, // LLM helps handle verbose input
+      useLlmResponses: true, // Enable LLM for natural responses
       handleUnknownIntents: 'clarify',
     },
     initialMessage: 'Hi I need to schedule an appointment',
@@ -588,15 +591,17 @@ const goalTestCases: GoalTestCase[] = [
       ...STANDARD_DATA_COLLECTION_GOALS,
       {
         id: 'note-previous-treatment',
-        type: 'custom',
-        description: 'Agent acknowledges previous orthodontic treatment',
+        type: 'data_collection',
+        description: 'Agent asks about and collects previous orthodontic treatment history',
+        requiredFields: ['previous_ortho'],
         priority: 5,
         required: true,
       },
+      BOOKING_GOAL, // Added to ensure full booking flow is tested
     ],
-    constraints: [NO_ERRORS_CONSTRAINT, MAX_TURNS_20],
+    constraints: [NO_ERRORS_CONSTRAINT, MAX_TURNS_25], // Increased turns for full booking
     responseConfig: {
-      maxTurns: 20,
+      maxTurns: 25,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -968,6 +973,686 @@ const goalTestCases: GoalTestCase[] = [
       handleUnknownIntents: 'clarify',
     },
     initialMessage: 'Schedule orthodontic appointment for my kids',
+  },
+
+  // =========================================================================
+  // FRD GAP COVERAGE - NEW TEST CASES
+  // =========================================================================
+
+  // GAP-001: Out-of-Network Insurance Handling
+  {
+    caseId: 'GOAL-EDGE-006',
+    name: 'Out-of-Network Insurance - Proceed Anyway',
+    description: 'Caller has out-of-network insurance. Agent discloses not in-network, asks if proceed, caller confirms.',
+    category: 'edge-case',
+    tags: ['insurance', 'out-of-network', 'disclosure', 'proceed'],
+    persona: {
+      name: 'Robert Chen',
+      description: 'Parent with out-of-network insurance who wants to proceed',
+      inventory: {
+        parentFirstName: 'Robert',
+        parentLastName: 'Chen',
+        parentPhone: '2155556666',
+        parentEmail: 'robert@email.com',
+        children: [{
+          firstName: 'Kevin',
+          lastName: 'Chen',
+          dateOfBirth: '2013-08-22',
+          isNewPatient: true,
+          hadBracesBefore: false,
+        }],
+        hasInsurance: true,
+        insuranceProvider: 'United Healthcare', // NOT in-network
+        previousVisitToOffice: false,
+        previousOrthoTreatment: false,
+        preferredTimeOfDay: 'any',
+      },
+      traits: DEFAULT_TRAITS,
+    },
+    goals: [
+      ...STANDARD_DATA_COLLECTION_GOALS,
+      {
+        id: 'disclose-out-of-network',
+        type: 'custom',
+        description: 'Agent discloses insurance is not in-network and asks if caller wants to proceed',
+        priority: 6,
+        required: true,
+      },
+      {
+        id: 'collect-card-reminder',
+        type: 'data_collection',
+        description: 'Agent reminds caller to bring insurance card',
+        requiredFields: ['card_reminder'],
+        priority: 7,
+        required: true,
+      },
+      BOOKING_GOAL,
+    ],
+    constraints: [
+      NO_ERRORS_CONSTRAINT,
+      {
+        type: 'must_happen',
+        description: 'Must disclose out-of-network status before proceeding',
+        severity: 'high',
+      },
+      {
+        type: 'must_not_happen',
+        description: 'Should NOT transfer for out-of-network insurance',
+        severity: 'high',
+      },
+    ],
+    responseConfig: {
+      maxTurns: 25,
+      useLlmResponses: false,
+      handleUnknownIntents: 'clarify',
+    },
+    initialMessage: 'Hi I need to schedule an orthodontic appointment for my son',
+  },
+
+  // GAP-003: Age Validation - Under 7
+  {
+    caseId: 'GOAL-EDGE-007',
+    name: 'Age Out of Range - Child Under 7',
+    description: 'Child is under age 7. Agent should recognize and transfer to specialist.',
+    category: 'edge-case',
+    tags: ['age-validation', 'under-7', 'transfer', 'ineligible'],
+    persona: {
+      name: 'Amanda Wilson',
+      description: 'Parent with child too young for orthodontic consult',
+      inventory: {
+        parentFirstName: 'Amanda',
+        parentLastName: 'Wilson',
+        parentPhone: '2155557777',
+        children: [{
+          firstName: 'Toby',
+          lastName: 'Wilson',
+          dateOfBirth: '2020-06-15', // 5 years old - too young
+          isNewPatient: true,
+        }],
+        previousVisitToOffice: false,
+      },
+      traits: DEFAULT_TRAITS,
+    },
+    goals: [
+      {
+        id: 'collect-basic-info',
+        type: 'data_collection',
+        description: 'Collect parent name and phone',
+        requiredFields: ['parent_name', 'parent_phone'],
+        priority: 1,
+        required: true,
+      },
+      {
+        id: 'collect-child-dob',
+        type: 'data_collection',
+        description: 'Collect child date of birth',
+        requiredFields: ['child_dob'],
+        priority: 3,
+        required: true,
+      },
+      {
+        id: 'recognize-age-invalid',
+        type: 'custom',
+        description: 'Agent recognizes child is under 7 and needs transfer',
+        priority: 5,
+        required: true,
+      },
+      TRANSFER_GOAL,
+    ],
+    constraints: [
+      NO_ERRORS_CONSTRAINT,
+      {
+        type: 'must_not_happen',
+        description: 'Should not continue with booking for under-7 child',
+        severity: 'critical',
+      },
+    ],
+    responseConfig: {
+      maxTurns: 15,
+      useLlmResponses: false,
+      handleUnknownIntents: 'clarify',
+    },
+    initialMessage: 'I need to schedule an orthodontic consult for my child',
+  },
+
+  // GAP-003: Age Validation - Over 20
+  {
+    caseId: 'GOAL-EDGE-008',
+    name: 'Age Out of Range - Patient Over 20',
+    description: 'Patient is over age 20. Agent should recognize and transfer to specialist.',
+    category: 'edge-case',
+    tags: ['age-validation', 'over-20', 'transfer', 'adult'],
+    persona: {
+      name: 'Carol Martinez',
+      description: 'Parent calling for adult child over 20',
+      inventory: {
+        parentFirstName: 'Carol',
+        parentLastName: 'Martinez',
+        parentPhone: '2155558888',
+        children: [{
+          firstName: 'Diego',
+          lastName: 'Martinez',
+          dateOfBirth: '2002-03-10', // 23 years old - too old
+          isNewPatient: true,
+        }],
+        previousVisitToOffice: false,
+      },
+      traits: DEFAULT_TRAITS,
+    },
+    goals: [
+      {
+        id: 'collect-basic-info',
+        type: 'data_collection',
+        description: 'Collect parent name and phone',
+        requiredFields: ['parent_name', 'parent_phone'],
+        priority: 1,
+        required: true,
+      },
+      {
+        id: 'collect-child-dob',
+        type: 'data_collection',
+        description: 'Collect patient date of birth',
+        requiredFields: ['child_dob'],
+        priority: 3,
+        required: true,
+      },
+      {
+        id: 'recognize-age-invalid',
+        type: 'custom',
+        description: 'Agent recognizes patient is over 20 and needs transfer',
+        priority: 5,
+        required: true,
+      },
+      TRANSFER_GOAL,
+    ],
+    constraints: [
+      NO_ERRORS_CONSTRAINT,
+      {
+        type: 'must_not_happen',
+        description: 'Should not continue with booking for over-20 patient',
+        severity: 'critical',
+      },
+    ],
+    responseConfig: {
+      maxTurns: 15,
+      useLlmResponses: false,
+      handleUnknownIntents: 'clarify',
+    },
+    initialMessage: 'I want to schedule an orthodontic appointment for my son',
+  },
+
+  // GAP-008/009: Address and Parking Request
+  {
+    caseId: 'GOAL-EDGE-009',
+    name: 'Address Request with Parking Info',
+    description: 'After booking, caller asks for address. Agent should provide address AND parking information.',
+    category: 'edge-case',
+    tags: ['address', 'parking', 'faq', 'location-info'],
+    persona: {
+      name: 'Patricia Lee',
+      description: 'Parent who needs address and parking info after booking',
+      inventory: {
+        parentFirstName: 'Patricia',
+        parentLastName: 'Lee',
+        parentPhone: '2155559999',
+        parentEmail: 'patricia@email.com',
+        children: [{
+          firstName: 'Sophia',
+          lastName: 'Lee',
+          dateOfBirth: '2014-11-05',
+          isNewPatient: true,
+          hadBracesBefore: false,
+        }],
+        hasInsurance: true,
+        insuranceProvider: 'Keystone First',
+        previousVisitToOffice: false,
+        previousOrthoTreatment: false,
+      },
+      traits: DEFAULT_TRAITS,
+    },
+    goals: [
+      ...STANDARD_DATA_COLLECTION_GOALS,
+      BOOKING_GOAL,
+      {
+        id: 'provide-address',
+        type: 'data_collection',
+        description: 'Agent provides address when requested',
+        requiredFields: ['address_provided'],
+        priority: 11,
+        required: true,
+      },
+      {
+        id: 'provide-parking',
+        type: 'data_collection',
+        description: 'Agent includes parking information with address',
+        requiredFields: ['parking_info'],
+        priority: 12,
+        required: true,
+      },
+    ],
+    constraints: [
+      NO_ERRORS_CONSTRAINT,
+      {
+        type: 'must_happen',
+        description: 'Must provide parking info when giving address',
+        severity: 'medium',
+      },
+    ],
+    responseConfig: {
+      maxTurns: 25,
+      useLlmResponses: false,
+      handleUnknownIntents: 'clarify',
+    },
+    initialMessage: 'Hi I need to schedule an orthodontic appointment for my daughter',
+  },
+
+  // GAP-008: Hours of Operation FAQ
+  {
+    caseId: 'GOAL-EDGE-010',
+    name: 'Hours of Operation Question',
+    description: 'Caller asks about hours of operation. Agent should provide hours info.',
+    category: 'edge-case',
+    tags: ['hours', 'faq', 'office-info'],
+    persona: {
+      name: 'David Thompson',
+      description: 'Parent who wants to know office hours before scheduling',
+      inventory: {
+        parentFirstName: 'David',
+        parentLastName: 'Thompson',
+        parentPhone: '2155550101',
+        children: [{
+          firstName: 'Ryan',
+          lastName: 'Thompson',
+          dateOfBirth: '2012-09-18',
+          isNewPatient: true,
+        }],
+        previousVisitToOffice: false,
+      },
+      traits: DEFAULT_TRAITS,
+    },
+    goals: [
+      {
+        id: 'provide-hours',
+        type: 'data_collection',
+        description: 'Agent provides hours of operation when asked',
+        requiredFields: ['hours_info'],
+        priority: 1,
+        required: true,
+      },
+      {
+        id: 'continue-to-booking',
+        type: 'custom',
+        description: 'After providing hours, continue with booking if caller wants',
+        priority: 5,
+        required: false,
+      },
+    ],
+    constraints: [
+      NO_ERRORS_CONSTRAINT,
+      {
+        type: 'must_happen',
+        description: 'Must provide hours info when asked',
+        severity: 'high',
+      },
+    ],
+    responseConfig: {
+      maxTurns: 20,
+      useLlmResponses: false,
+      handleUnknownIntents: 'clarify',
+    },
+    initialMessage: 'Hi, what are your hours?',
+  },
+
+  // GAP-002: Silence Handling
+  {
+    caseId: 'GOAL-ERR-007',
+    name: 'Silence Fallback Handling',
+    description: 'Caller goes silent. Agent should prompt once then disconnect gracefully.',
+    category: 'error-handling',
+    tags: ['silence', 'fallback', 'disconnect', 'no-response'],
+    persona: {
+      name: 'Silent Caller',
+      description: 'Caller who stops responding mid-conversation',
+      inventory: {
+        parentFirstName: 'Silent',
+        parentLastName: 'Caller',
+        parentPhone: '2155550000',
+        children: [{
+          firstName: 'Child',
+          lastName: 'Caller',
+          dateOfBirth: '2014-01-01',
+          isNewPatient: true,
+        }],
+      },
+      traits: {
+        verbosity: 'terse',
+        providesExtraInfo: false,
+        patienceLevel: 'patient',
+        techSavviness: 'low',
+      },
+    },
+    goals: [
+      {
+        id: 'detect-silence',
+        type: 'custom',
+        description: 'Agent detects no response from caller',
+        priority: 1,
+        required: true,
+      },
+      {
+        id: 'prompt-still-there',
+        type: 'custom',
+        description: 'Agent asks "Are you still there?"',
+        priority: 2,
+        required: true,
+      },
+      {
+        id: 'graceful-disconnect',
+        type: 'conversation_ended',
+        description: 'Agent disconnects gracefully with appropriate message',
+        priority: 10,
+        required: true,
+      },
+    ],
+    constraints: [
+      NO_ERRORS_CONSTRAINT,
+      {
+        type: 'must_happen',
+        description: 'Must say disconnect message before ending call',
+        severity: 'high',
+      },
+    ],
+    responseConfig: {
+      maxTurns: 5,
+      useLlmResponses: false,
+      handleUnknownIntents: 'clarify',
+    },
+    initialMessage: 'Hi I need to schedule an appointment',
+  },
+
+  // GAP-005/006: Full Confirmation Flow with Legal + Paperwork
+  {
+    caseId: 'GOAL-HAPPY-004',
+    name: 'Full Confirmation with Legal and Paperwork Notice',
+    description: 'Complete booking with full confirmation including court documentation mention and early arrival notice.',
+    category: 'happy-path',
+    tags: ['confirmation', 'legal-notice', 'paperwork', 'early-arrival', 'full-flow'],
+    persona: {
+      name: 'Jennifer Adams',
+      description: 'Parent completing full booking flow to hear all confirmation details',
+      inventory: {
+        parentFirstName: 'Jennifer',
+        parentLastName: 'Adams',
+        parentPhone: '2155550202',
+        parentEmail: 'jennifer@email.com',
+        children: [{
+          firstName: 'Lucas',
+          lastName: 'Adams',
+          dateOfBirth: '2013-04-20',
+          isNewPatient: true,
+          hadBracesBefore: false,
+        }],
+        hasInsurance: true,
+        insuranceProvider: 'PA Medicaid',
+        previousVisitToOffice: false,
+        previousOrthoTreatment: false,
+      },
+      traits: DEFAULT_TRAITS,
+    },
+    goals: [
+      ...STANDARD_DATA_COLLECTION_GOALS,
+      BOOKING_GOAL,
+      {
+        id: 'mention-guardian-requirement',
+        type: 'data_collection',
+        description: 'Agent mentions parent/legal guardian must be present',
+        requiredFields: ['court_docs_mentioned'],
+        priority: 11,
+        required: true,
+      },
+      {
+        id: 'mention-early-arrival',
+        type: 'data_collection',
+        description: 'Agent mentions 20-30 minute early arrival if paperwork not done',
+        requiredFields: ['early_arrival_mentioned'],
+        priority: 12,
+        required: true,
+      },
+      GRACEFUL_END_GOAL,
+    ],
+    constraints: [
+      NO_ERRORS_CONSTRAINT,
+      {
+        type: 'must_happen',
+        description: 'Must mention court documentation for non-parent guardians',
+        severity: 'high',
+      },
+      {
+        type: 'must_happen',
+        description: 'Must mention early arrival for paperwork',
+        severity: 'medium',
+      },
+    ],
+    responseConfig: {
+      maxTurns: 25,
+      useLlmResponses: false,
+      handleUnknownIntents: 'clarify',
+    },
+    initialMessage: 'Hi I need to schedule an orthodontic appointment for my son',
+  },
+
+  // GAP-007: Insurance with Group/Member ID Collection
+  {
+    caseId: 'GOAL-HAPPY-005',
+    name: 'Insurance with Group and Member ID Collection',
+    description: 'Caller provides insurance with Group # and Member ID. Agent collects and reminds about card.',
+    category: 'happy-path',
+    tags: ['insurance', 'group-id', 'member-id', 'card-reminder'],
+    persona: {
+      name: 'Karen White',
+      description: 'Parent who provides full insurance details',
+      inventory: {
+        parentFirstName: 'Karen',
+        parentLastName: 'White',
+        parentPhone: '2155550303',
+        parentEmail: 'karen@email.com',
+        children: [{
+          firstName: 'Emma',
+          lastName: 'White',
+          dateOfBirth: '2012-07-12',
+          isNewPatient: true,
+          hadBracesBefore: false,
+        }],
+        hasInsurance: true,
+        insuranceProvider: 'Aetna Better Health',
+        previousVisitToOffice: false,
+        previousOrthoTreatment: false,
+      },
+      traits: {
+        verbosity: 'verbose',
+        providesExtraInfo: true,
+        patienceLevel: 'patient',
+        techSavviness: 'high',
+      },
+    },
+    goals: [
+      ...STANDARD_DATA_COLLECTION_GOALS,
+      {
+        id: 'confirm-in-network',
+        type: 'data_collection',
+        description: 'Agent confirms insurance is in-network',
+        requiredFields: ['insurance_in_network'],
+        priority: 6,
+        required: true,
+      },
+      {
+        id: 'collect-group-id',
+        type: 'data_collection',
+        description: 'Agent asks for Group # (optional)',
+        requiredFields: ['insurance_group_id'],
+        priority: 7,
+        required: false,
+      },
+      {
+        id: 'collect-member-id',
+        type: 'data_collection',
+        description: 'Agent asks for Member ID (optional)',
+        requiredFields: ['insurance_member_id'],
+        priority: 8,
+        required: false,
+      },
+      {
+        id: 'provide-card-reminder',
+        type: 'data_collection',
+        description: 'Agent reminds caller to bring insurance card',
+        requiredFields: ['card_reminder'],
+        priority: 9,
+        required: true,
+      },
+      BOOKING_GOAL,
+    ],
+    constraints: [
+      NO_ERRORS_CONSTRAINT,
+      {
+        type: 'must_happen',
+        description: 'Must remind to bring insurance card',
+        severity: 'medium',
+      },
+    ],
+    responseConfig: {
+      maxTurns: 25,
+      useLlmResponses: false,
+      handleUnknownIntents: 'clarify',
+    },
+    initialMessage: 'Hi I need to schedule an orthodontic consult for my daughter',
+  },
+
+  // GAP-004: Intent Probing - Unclear Intent
+  {
+    caseId: 'GOAL-EDGE-011',
+    name: 'Intent Probing - Unclear Appointment Type',
+    description: 'Caller asks for generic appointment. Agent should probe to clarify if ortho or general dentistry.',
+    category: 'edge-case',
+    tags: ['intent', 'probing', 'clarification', 'ortho-vs-general'],
+    persona: {
+      name: 'Mike Brown',
+      description: 'Parent with unclear intent about type of appointment',
+      inventory: {
+        parentFirstName: 'Mike',
+        parentLastName: 'Brown',
+        parentPhone: '2155550404',
+        children: [{
+          firstName: 'Tyler',
+          lastName: 'Brown',
+          dateOfBirth: '2013-02-28',
+          isNewPatient: true,
+        }],
+        previousVisitToOffice: false,
+      },
+      traits: DEFAULT_TRAITS,
+    },
+    goals: [
+      {
+        id: 'probe-intent',
+        type: 'custom',
+        description: 'Agent asks if calling about orthodontics or general dentistry',
+        priority: 1,
+        required: true,
+      },
+      {
+        id: 'collect-basic-info',
+        type: 'data_collection',
+        description: 'After confirming ortho intent, collect parent info',
+        requiredFields: ['parent_name', 'parent_phone'],
+        priority: 2,
+        required: true,
+      },
+    ],
+    constraints: [
+      NO_ERRORS_CONSTRAINT,
+      {
+        type: 'must_happen',
+        description: 'Must ask clarifying question about ortho vs general',
+        severity: 'high',
+      },
+    ],
+    responseConfig: {
+      maxTurns: 15,
+      useLlmResponses: false,
+      handleUnknownIntents: 'clarify',
+    },
+    initialMessage: 'Hi I need to schedule an appointment for my son',
+  },
+
+  // GAP-003: Spelling Confirmation Verification
+  {
+    caseId: 'GOAL-HAPPY-006',
+    name: 'Spelling Confirmation Loop',
+    description: 'Agent asks for spelling and REPEATS spelling back for confirmation before proceeding.',
+    category: 'happy-path',
+    tags: ['spelling', 'confirmation', 'name-verification', 'accuracy'],
+    persona: {
+      name: 'Christina Nguyen',
+      description: 'Parent with name that requires careful spelling confirmation',
+      inventory: {
+        parentFirstName: 'Christina',
+        parentLastName: 'Nguyen',
+        parentPhone: '2155550505',
+        parentEmail: 'christina@email.com',
+        children: [{
+          firstName: 'Minh',
+          lastName: 'Nguyen',
+          dateOfBirth: '2014-06-18',
+          isNewPatient: true,
+        }],
+        hasInsurance: true,
+        insuranceProvider: 'Gateway',
+        previousVisitToOffice: false,
+        previousOrthoTreatment: false,
+      },
+      traits: DEFAULT_TRAITS,
+    },
+    goals: [
+      {
+        id: 'collect-name',
+        type: 'data_collection',
+        description: 'Collect parent name',
+        requiredFields: ['parent_name'],
+        priority: 1,
+        required: true,
+      },
+      {
+        id: 'request-spelling',
+        type: 'data_collection',
+        description: 'Agent asks caller to spell name',
+        requiredFields: ['parent_name_spelling'],
+        priority: 2,
+        required: true,
+      },
+      {
+        id: 'confirm-spelling',
+        type: 'custom',
+        description: 'Agent repeats spelling back and asks for confirmation',
+        priority: 3,
+        required: true,
+      },
+      ...STANDARD_DATA_COLLECTION_GOALS.slice(1), // Skip parent-info goal
+      BOOKING_GOAL,
+    ],
+    constraints: [
+      NO_ERRORS_CONSTRAINT,
+      {
+        type: 'must_happen',
+        description: 'Must repeat spelling back for confirmation',
+        severity: 'high',
+      },
+    ],
+    responseConfig: {
+      maxTurns: 25,
+      useLlmResponses: false,
+      handleUnknownIntents: 'clarify',
+    },
+    initialMessage: 'Hi I need to schedule an orthodontic appointment for my child',
   },
 ];
 

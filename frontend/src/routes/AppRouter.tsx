@@ -20,6 +20,7 @@ import {
   AgentTuning,
   TestCasesPage,
   GoalTestsDashboard,
+  CreateGoalTestPage,
 } from '../pages/TestMonitor';
 import { NotFound } from '../pages/NotFound';
 import { ROUTES } from '../utils/constants';
@@ -49,6 +50,7 @@ export function AppRouter() {
             <Route index element={<TestMonitorDashboard />} />
             <Route path="cases" element={<TestCasesPage />} />
             <Route path="goal-cases" element={<GoalTestsDashboard />} />
+            <Route path="create" element={<CreateGoalTestPage />} />
             <Route path="history" element={<TestRunHistory />} />
             <Route path="tuning" element={<AgentTuning />} />
             <Route path="run/:runId" element={<TestRunDetail />} />

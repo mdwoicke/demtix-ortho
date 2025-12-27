@@ -15,7 +15,7 @@ import { clsx } from 'clsx';
 
 import { PersonaEditor } from '../../components/features/testCases/PersonaEditor';
 import { GoalsEditor } from '../../components/features/testCases/GoalsEditor';
-import { ConstraintsEditor } from '../../components/features/testCases/ConstraintsEditor';
+import { ResponseConfigEditor } from '../../components/features/testCases/ResponseConfigEditor';
 import { PageHeader } from '../../components/layout';
 import { Button, Card } from '../../components/ui';
 
@@ -396,7 +396,7 @@ export function GoalTestsDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [concurrency, setConcurrency] = useState(1);
   const [runCount, setRunCount] = useState(1);
-  const [timeout, setTimeout] = useState(60000);
+  const [testTimeout, setTestTimeout] = useState(60000);
   const [retryFailed, setRetryFailed] = useState(false);
   const [enableSemanticEval, setEnableSemanticEval] = useState(true);
 
@@ -509,7 +509,7 @@ export function GoalTestsDashboard() {
 
       const result = await dispatch(runGoalTests({
         caseIds,
-        config: { concurrency, timeout, retryFailedTests: retryFailed },
+        config: { concurrency, timeout: testTimeout, retryFailedTests: retryFailed },
       })).unwrap();
 
       setExecutionState({
@@ -748,8 +748,8 @@ export function GoalTestsDashboard() {
                     Timeout (seconds)
                   </label>
                   <select
-                    value={timeout}
-                    onChange={(e) => setTimeout(parseInt(e.target.value))}
+                    value={testTimeout}
+                    onChange={(e) => setTestTimeout(parseInt(e.target.value))}
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                     disabled={executionState.isExecuting}
                   >
@@ -867,10 +867,9 @@ export function GoalTestsDashboard() {
                       <>
                         <Button
                           onClick={handleCancelSelection}
-                          variant="ghost"
-                          className="!p-2"
+                          variant="secondary"
                         >
-                          <Icons.X />
+                          Cancel
                         </Button>
                         <Button
                           onClick={handleEdit}
@@ -891,7 +890,7 @@ export function GoalTestsDashboard() {
                           ) : (
                             <>
                               <Icons.Play />
-                              <span className="ml-1.5">Run Test</span>
+                              <span className="ml-1.5">Run</span>
                             </>
                           )}
                         </Button>
@@ -938,8 +937,8 @@ export function GoalTestsDashboard() {
                   />
                 )}
                 {activeTab === 'config' && activeTestCase && (
-                  <ConstraintsEditor
-                    constraints={activeTestCase.responseConfig}
+                  <ResponseConfigEditor
+                    responseConfig={activeTestCase.responseConfig}
                     onChange={handleConstraintsChange}
                     readOnly={!editingTestCase}
                   />

@@ -55,6 +55,14 @@ export interface ApiCall {
 // DYNAMIC AGENT TUNING SYSTEM - New Interfaces
 // ============================================================================
 
+export interface FixClassification {
+  issueLocation: 'bot' | 'test-agent' | 'both';
+  confidence: number;
+  reasoning: string;
+  userBehaviorRealistic: boolean;
+  botResponseAppropriate: boolean;
+}
+
 export interface GeneratedFix {
   fixId: string;
   runId: string;
@@ -75,6 +83,7 @@ export interface GeneratedFix {
     type: string;
     evidence: string[];
   };
+  classification?: FixClassification;
   status: 'pending' | 'applied' | 'rejected' | 'verified';
   createdAt: string;
 }
@@ -334,9 +343,11 @@ export class Database {
         confidence REAL DEFAULT 0.5,
         affected_tests TEXT,
         root_cause_json TEXT,
+        classification_json TEXT,
         status TEXT CHECK(status IN ('pending', 'applied', 'rejected', 'verified')) DEFAULT 'pending',
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
+
 
       -- Fix Outcomes (track effectiveness of applied fixes)
       CREATE TABLE IF NOT EXISTS fix_outcomes (
@@ -469,6 +480,9 @@ export class Database {
     // Migration: Add resolved persona fields to goal_test_results
     this.addColumnIfNotExists('goal_test_results', 'resolved_persona_json', 'TEXT');
     this.addColumnIfNotExists('goal_test_results', 'generation_seed', 'INTEGER');
+
+    // Migration: Add classification_json column to generated_fixes
+    this.addColumnIfNotExists('generated_fixes', 'classification_json', 'TEXT');
   }
 
   /**
@@ -979,8 +993,8 @@ export class Database {
     db.prepare(`
       INSERT OR REPLACE INTO generated_fixes
       (fix_id, run_id, type, target_file, change_description, change_code,
-       location_json, priority, confidence, affected_tests, root_cause_json, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       location_json, priority, confidence, affected_tests, root_cause_json, classification_json, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       fix.fixId,
       fix.runId,
@@ -993,6 +1007,7 @@ export class Database {
       fix.confidence,
       JSON.stringify(fix.affectedTests),
       fix.rootCause ? JSON.stringify(fix.rootCause) : null,
+      fix.classification ? JSON.stringify(fix.classification) : null,
       fix.status,
       fix.createdAt || new Date().toISOString()
     );
@@ -1015,7 +1030,7 @@ export class Database {
 
     let query = `
       SELECT fix_id, run_id, type, target_file, change_description, change_code,
-             location_json, priority, confidence, affected_tests, root_cause_json, status, created_at
+             location_json, priority, confidence, affected_tests, root_cause_json, classification_json, status, created_at
       FROM generated_fixes
     `;
     const conditions: string[] = [];
@@ -1050,6 +1065,7 @@ export class Database {
       confidence: row.confidence,
       affectedTests: row.affected_tests ? JSON.parse(row.affected_tests) : [],
       rootCause: row.root_cause_json ? JSON.parse(row.root_cause_json) : undefined,
+      classification: row.classification_json ? JSON.parse(row.classification_json) : undefined,
       status: row.status,
       createdAt: row.created_at,
     }));
@@ -1063,7 +1079,7 @@ export class Database {
 
     const row = db.prepare(`
       SELECT fix_id, run_id, type, target_file, change_description, change_code,
-             location_json, priority, confidence, affected_tests, root_cause_json, status, created_at
+             location_json, priority, confidence, affected_tests, root_cause_json, classification_json, status, created_at
       FROM generated_fixes
       WHERE fix_id = ?
     `).get(fixId) as any;
@@ -1082,6 +1098,7 @@ export class Database {
       confidence: row.confidence,
       affectedTests: row.affected_tests ? JSON.parse(row.affected_tests) : [],
       rootCause: row.root_cause_json ? JSON.parse(row.root_cause_json) : undefined,
+      classification: row.classification_json ? JSON.parse(row.classification_json) : undefined,
       status: row.status,
       createdAt: row.created_at,
     };

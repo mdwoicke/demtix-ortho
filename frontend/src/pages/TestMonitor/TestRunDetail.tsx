@@ -53,6 +53,7 @@ import {
   fetchPromptContent,
   fetchPromptHistory,
   applyFixToPrompt,
+  applyBatchFixes,
   selectPromptFiles,
   selectPromptContent,
   selectPromptHistory,
@@ -87,6 +88,10 @@ export function TestRunDetail() {
 
   // Diagnosis state
   const [diagnosisRunning, setDiagnosisRunning] = useState(false);
+
+  // Batch fix selection state
+  const [selectedFixIds, setSelectedFixIds] = useState<Set<string>>(new Set());
+  const [applyingBatch, setApplyingBatch] = useState(false);
 
   // Keep track of the EventSource connection
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -275,6 +280,48 @@ export function TestRunDetail() {
     }
   };
 
+  // Batch fix selection handlers
+  const pendingFixes = fixes.filter(f => f.status === 'pending');
+
+  const handleSelectionChange = useCallback((fixId: string, selected: boolean) => {
+    setSelectedFixIds(prev => {
+      const next = new Set(prev);
+      if (selected) {
+        next.add(fixId);
+      } else {
+        next.delete(fixId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback((selected: boolean) => {
+    if (selected) {
+      const pendingIds = pendingFixes.map(f => f.fixId);
+      setSelectedFixIds(new Set(pendingIds));
+    } else {
+      setSelectedFixIds(new Set());
+    }
+  }, [pendingFixes]);
+
+  const handleApplySelectedFixes = useCallback(async () => {
+    if (selectedFixIds.size === 0) return;
+
+    setApplyingBatch(true);
+    try {
+      const fixIds = Array.from(selectedFixIds);
+      await dispatch(applyBatchFixes(fixIds)).unwrap();
+      // Clear selection after successful application
+      setSelectedFixIds(new Set());
+      // Refresh prompt files to get updated versions
+      dispatch(fetchPromptFiles());
+    } catch (error) {
+      console.error('Failed to apply batch fixes:', error);
+    } finally {
+      setApplyingBatch(false);
+    }
+  }, [dispatch, selectedFixIds]);
+
   return (
     <div className="h-full flex flex-col">
       <PageHeader
@@ -345,13 +392,16 @@ export function TestRunDetail() {
           {/* Transcript */}
           <ExpandablePanel
             title="Conversation"
-            subtitle={selectedTest ? `- ${selectedTest.testName}` : undefined}
+            subtitle={selectedTest ? `- ${selectedTest.testName} (${transcript.length} turns)` : undefined}
             maxContentHeight="400px"
           >
             <TranscriptViewer
               transcript={transcript}
               apiCalls={apiCalls}
               loading={transcriptLoading}
+              testId={selectedTest?.testId}
+              runId={selectedTest?.runId}
+              dbId={selectedTest?.id}
             />
           </ExpandablePanel>
 
@@ -398,6 +448,12 @@ export function TestRunDetail() {
               onRunDiagnosis={handleRunDiagnosis}
               diagnosisRunning={diagnosisRunning}
               hasFailedTests={(selectedRun?.failed || 0) > 0}
+              // Batch selection props
+              selectedFixIds={selectedFixIds}
+              onSelectionChange={handleSelectionChange}
+              onSelectAll={handleSelectAll}
+              onApplySelectedFixes={handleApplySelectedFixes}
+              applyingBatch={applyingBatch}
             />
           </ExpandablePanel>
 

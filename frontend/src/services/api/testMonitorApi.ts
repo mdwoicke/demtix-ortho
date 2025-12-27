@@ -388,6 +388,37 @@ export async function syncPromptToDisk(
 }
 
 /**
+ * Apply multiple fixes to their respective target files
+ * Handles automatic file detection and curly brace escaping for Flowise
+ */
+export interface BatchApplyResult {
+  results: Array<{
+    fixId: string;
+    success: boolean;
+    fileKey?: string;
+    newVersion?: number;
+    error?: string;
+    warnings?: string[];
+  }>;
+  summary: {
+    total: number;
+    successful: number;
+    failed: number;
+    filesModified: string[];
+  };
+}
+
+export async function applyBatchFixes(
+  fixIds: string[]
+): Promise<BatchApplyResult> {
+  const response = await post<TestMonitorApiResponse<BatchApplyResult>>(
+    '/test-monitor/prompts/apply-batch',
+    { fixIds }
+  );
+  return response.data;
+}
+
+/**
  * Save new prompt version (manual edit)
  */
 export async function savePromptVersion(
@@ -542,6 +573,131 @@ export async function runDiagnosis(
     { useLLM: options?.useLLM ?? true }
   );
   return response;
+}
+
+// ============================================================================
+// VERIFICATION API
+// ============================================================================
+
+import type { VerificationSummary } from '../../types/testMonitor.types';
+
+/**
+ * Verify fixes by re-running affected tests
+ * Compares results before and after to determine fix effectiveness
+ */
+export async function verifyFixes(
+  fixIds: string[]
+): Promise<VerificationSummary> {
+  const response = await post<TestMonitorApiResponse<VerificationSummary>>(
+    '/test-monitor/fixes/verify',
+    { fixIds }
+  );
+  return response.data;
+}
+
+// ============================================================================
+// DEPLOYMENT TRACKING API (Phase 5: Flowise Sync)
+// ============================================================================
+
+export interface DeploymentRecord {
+  version: number;
+  deployedAt: string;
+  deployedBy?: string;
+  notes?: string;
+}
+
+/**
+ * Get deployed versions for all prompt files
+ */
+export async function getDeployedVersions(): Promise<Record<string, number>> {
+  const response = await get<TestMonitorApiResponse<Record<string, number>>>(
+    '/test-monitor/prompts/deployed'
+  );
+  return response.data;
+}
+
+/**
+ * Mark a prompt version as deployed to Flowise
+ */
+export async function markPromptAsDeployed(
+  fileKey: string,
+  version: number,
+  notes?: string
+): Promise<{ success: boolean; message: string }> {
+  const response = await post<{ success: boolean; message: string }>(
+    `/test-monitor/prompts/${fileKey}/mark-deployed`,
+    { version, notes }
+  );
+  return response;
+}
+
+/**
+ * Get deployment history for a prompt file
+ */
+export async function getDeploymentHistory(
+  fileKey: string,
+  limit: number = 10
+): Promise<DeploymentRecord[]> {
+  const response = await get<TestMonitorApiResponse<DeploymentRecord[]>>(
+    `/test-monitor/prompts/${fileKey}/deployment-history?limit=${limit}`
+  );
+  return response.data;
+}
+
+/**
+ * Copy full prompt content for pasting into Flowise
+ * Returns the full prompt content for clipboard copy
+ */
+export async function getPromptForFlowise(fileKey: string): Promise<string> {
+  const content = await getPromptContent(fileKey);
+  return content.content;
+}
+
+// ============================================================================
+// VERSION ROLLBACK API (Phase 8)
+// ============================================================================
+
+export interface RollbackResult {
+  newVersion: number;
+  originalVersion: number;
+  rolledBackTo: number;
+  message: string;
+}
+
+export interface VersionDiff {
+  version1Lines: number;
+  version2Lines: number;
+  addedLines: number;
+  removedLines: number;
+  changedLines: number;
+}
+
+/**
+ * Rollback a prompt to a previous version
+ */
+export async function rollbackPromptVersion(
+  fileKey: string,
+  targetVersion: number
+): Promise<RollbackResult> {
+  const response = await post<TestMonitorApiResponse<RollbackResult>>(
+    `/test-monitor/prompts/${fileKey}/rollback`,
+    { targetVersion }
+  );
+  return response.data;
+}
+
+/**
+ * Get diff between two prompt versions
+ */
+export async function getPromptVersionDiff(
+  fileKey: string,
+  version1: number,
+  version2: number
+): Promise<VersionDiff> {
+  const response = await get<TestMonitorApiResponse<VersionDiff>>(
+    `/test-monitor/prompts/${fileKey}/diff?version1=${version1}&version2=${version2}`
+  );
+  return response.data;
 }
 
 // ============================================================================
@@ -711,6 +867,118 @@ export async function syncGoalTestCases(): Promise<{
 export async function getGoalTestPresets(): Promise<GoalTestPresetsResponse> {
   const response = await get<TestMonitorApiResponse<GoalTestPresetsResponse>>(
     '/test-monitor/goal-tests/personas'
+  );
+  return response.data;
+}
+
+// ============================================================================
+// AI SUGGESTION API
+// ============================================================================
+
+/**
+ * AI suggestion request parameters
+ */
+export interface AISuggestionRequest {
+  name: string;
+  category: 'happy-path' | 'edge-case' | 'error-handling';
+  description?: string;
+  personaTraits?: {
+    verbosity?: 'terse' | 'normal' | 'verbose';
+    providesExtraInfo?: boolean;
+    patienceLevel?: 'patient' | 'moderate' | 'impatient';
+    techSavviness?: 'low' | 'moderate' | 'high';
+  };
+  tags?: string[];
+  model?: 'fast' | 'standard' | 'detailed';
+}
+
+/**
+ * Individual suggestion item with explanation
+ */
+export interface SuggestionItem<T> {
+  data: T;
+  explanation: string;
+  confidence: number;
+  accepted?: boolean;
+}
+
+/**
+ * AI suggestion response
+ */
+export interface AISuggestionResponse {
+  success: boolean;
+  suggestions: {
+    goals: SuggestionItem<ConversationGoalDTO>[];
+    constraints: SuggestionItem<TestConstraintDTO>[];
+    initialMessage?: {
+      message: string;
+      explanation: string;
+    };
+    reasoning: string;
+  } | null;
+  metadata: {
+    model: string;
+    processingTimeMs: number;
+    tokensUsed?: number;
+  };
+  error?: string;
+}
+
+/**
+ * AI suggestion service status
+ */
+export interface AISuggestionServiceStatus {
+  available: boolean;
+  models: Array<'fast' | 'standard' | 'detailed'>;
+  message: string;
+}
+
+/**
+ * Check AI suggestion service availability
+ */
+export async function getAISuggestionServiceStatus(): Promise<AISuggestionServiceStatus> {
+  const response = await get<TestMonitorApiResponse<AISuggestionServiceStatus>>(
+    '/test-monitor/goal-tests/suggest/status'
+  );
+  return response.data;
+}
+
+/**
+ * Generate AI-powered goal and constraint suggestions
+ */
+export async function generateAISuggestions(
+  request: AISuggestionRequest
+): Promise<AISuggestionResponse> {
+  const response = await post<TestMonitorApiResponse<AISuggestionResponse>>(
+    '/test-monitor/goal-tests/suggest',
+    request
+  );
+  return response.data;
+}
+
+// ============================================================================
+// AI GOAL ANALYSIS API (Step 0 - AI Analyzer)
+// ============================================================================
+
+import type { GoalAnalysisResult } from '../../types/goalTestWizard.types';
+
+/**
+ * AI goal analysis request parameters
+ */
+export interface GoalAnalysisRequest {
+  description: string;
+  model?: 'fast' | 'standard' | 'detailed';
+}
+
+/**
+ * Analyze a natural language goal description and generate wizard form data
+ */
+export async function analyzeGoalDescription(
+  request: GoalAnalysisRequest
+): Promise<GoalAnalysisResult> {
+  const response = await post<TestMonitorApiResponse<GoalAnalysisResult>>(
+    '/test-monitor/goal-tests/analyze',
+    request
   );
   return response.data;
 }

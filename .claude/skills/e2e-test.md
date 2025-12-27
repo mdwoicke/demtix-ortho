@@ -1,11 +1,11 @@
+---
+name: e2e-test
+description: End-to-end testing and debugging workflow for Allie IVA (orthodontic appointment scheduling chatbot via Cloud9 API)
+---
+
 # E2E Testing Skill - Dentix-Ortho Flowise Chatbot
 
-## Skill Metadata
-- **Name**: `e2e-test`
-- **Trigger Hints**: "run tests", "e2e test", "debug flowise", "analyze langfuse", "test chatbot"
-- **Description**: End-to-end testing and debugging workflow for Allie IVA (orthodontic appointment scheduling chatbot via Cloud9 API)
-
----
+**Trigger Hints**: "run tests", "e2e test", "debug flowise", "analyze langfuse", "test chatbot"
 
 ## Quick Start Commands
 

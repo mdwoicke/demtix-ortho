@@ -151,6 +151,15 @@ export class ProgressTracker {
       'saying_goodbye': 'ended',
     };
 
+    // Set persistent flags when key intents are detected
+    // These flags survive subsequent flow state changes (e.g., goodbye after booking)
+    if (intent === 'confirming_booking') {
+      this.state.bookingConfirmed = true;
+    }
+    if (intent === 'initiating_transfer') {
+      this.state.transferInitiated = true;
+    }
+
     if (stateMap[intent]) {
       this.state.currentFlowState = stateMap[intent]!;
     }
@@ -278,9 +287,11 @@ export class ProgressTracker {
 
   /**
    * Evaluate booking confirmed goal
+   * Uses persistent flag to survive goodbye after booking confirmation
    */
   private evaluateBookingGoal(): GoalResult {
     const isBookingConfirmed =
+      this.state.bookingConfirmed ||  // Persistent flag (survives goodbye)
       this.state.currentFlowState === 'confirmation' ||
       this.state.lastAgentIntent === 'confirming_booking';
 
@@ -293,9 +304,11 @@ export class ProgressTracker {
 
   /**
    * Evaluate transfer initiated goal
+   * Uses persistent flag to survive goodbye after transfer initiation
    */
   private evaluateTransferGoal(): GoalResult {
     const isTransfer =
+      this.state.transferInitiated ||  // Persistent flag (survives goodbye)
       this.state.currentFlowState === 'transfer' ||
       this.state.lastAgentIntent === 'initiating_transfer';
 
@@ -328,8 +341,8 @@ export class ProgressTracker {
     return {
       collectedData: this.state.collectedFields as Map<CollectableField, any>,
       conversationHistory: [], // Would be passed in from runner
-      agentConfirmedBooking: this.state.lastAgentIntent === 'confirming_booking',
-      agentInitiatedTransfer: this.state.lastAgentIntent === 'initiating_transfer',
+      agentConfirmedBooking: this.state.bookingConfirmed || this.state.lastAgentIntent === 'confirming_booking',
+      agentInitiatedTransfer: this.state.transferInitiated || this.state.lastAgentIntent === 'initiating_transfer',
       turnCount: this.state.turnNumber,
       elapsedTimeMs: Date.now() - this.state.startedAt.getTime(),
     };
@@ -407,6 +420,7 @@ export class ProgressTracker {
    * Mark the booking as confirmed externally
    */
   markBookingConfirmed(): void {
+    this.state.bookingConfirmed = true;
     this.state.currentFlowState = 'confirmation';
     this.evaluateGoals();
   }
@@ -415,6 +429,7 @@ export class ProgressTracker {
    * Mark a transfer as initiated externally
    */
   markTransferInitiated(): void {
+    this.state.transferInitiated = true;
     this.state.currentFlowState = 'transfer';
     this.evaluateGoals();
   }

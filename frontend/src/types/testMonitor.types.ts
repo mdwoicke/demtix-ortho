@@ -1,6 +1,7 @@
 /**
  * Test Monitor Types
  * Types for the Flowise test monitoring dashboard
+ * @module testMonitor.types
  */
 
 export interface TestRun {
@@ -87,6 +88,23 @@ export interface Recommendation {
   createdAt: string;
 }
 
+/**
+ * Classification of whether the issue is with the bot, test agent, or both
+ * Based on the "Golden Rule" from iva-prompt-tuning skill
+ */
+export interface FixClassification {
+  /** Where the issue originates - determines which system to fix */
+  issueLocation: 'bot' | 'test-agent' | 'both';
+  /** Confidence score from 0-1 */
+  confidence: number;
+  /** Explanation for the classification */
+  reasoning: string;
+  /** Would a real user say what the test agent said? */
+  userBehaviorRealistic: boolean;
+  /** Did the bot respond appropriately to the input? */
+  botResponseAppropriate: boolean;
+}
+
 export interface GeneratedFix {
   id: number;
   fixId: string;
@@ -107,6 +125,8 @@ export interface GeneratedFix {
     type: string;
     evidence: string[];
   } | null;
+  /** Classification of bot vs test-agent issue (Phase 2) */
+  classification?: FixClassification;
   status: 'pending' | 'applied' | 'rejected' | 'verified';
   createdAt: string;
 }
@@ -304,8 +324,8 @@ export interface ChildDataDTO {
   firstName: string;
   lastName: string;
   dateOfBirth: string;
-  isNewPatient: boolean;
-  hadBracesBefore?: boolean;
+  isNewPatient: TristateValue;
+  hadBracesBefore?: TristateValue;
   specialNeeds?: string;
 }
 
@@ -318,7 +338,7 @@ export interface DataInventoryDTO {
   parentPhone: string;
   parentEmail?: string;
   children: ChildDataDTO[];
-  hasInsurance?: boolean;
+  hasInsurance?: TristateValue;
   insuranceProvider?: string;
   preferredLocation?: string;
   preferredTimeOfDay?: 'morning' | 'afternoon' | 'any';
@@ -326,8 +346,8 @@ export interface DataInventoryDTO {
     start: string;
     end: string;
   };
-  previousVisitToOffice?: boolean;
-  previousOrthoTreatment?: boolean;
+  previousVisitToOffice?: TristateValue;
+  previousOrthoTreatment?: TristateValue;
 }
 
 /**
@@ -335,7 +355,7 @@ export interface DataInventoryDTO {
  */
 export interface PersonaTraitsDTO {
   verbosity: 'terse' | 'normal' | 'verbose';
-  providesExtraInfo: boolean;
+  providesExtraInfo: TristateValue;
   patienceLevel?: 'patient' | 'moderate' | 'impatient';
   techSavviness?: 'low' | 'moderate' | 'high';
 }
@@ -403,12 +423,17 @@ export interface TestConstraintDTO {
 }
 
 /**
+ * Tristate value that supports true, false, or random selection
+ */
+export type TristateValue = boolean | 'random';
+
+/**
  * Response config for goal tests
  */
 export interface ResponseConfigDTO {
   maxTurns: number;
-  useLlmResponses: boolean;
-  handleUnknownIntents: 'fail' | 'clarify' | 'generic';
+  useLlmResponses: TristateValue;
+  handleUnknownIntents: 'fail' | 'clarify' | 'generic' | 'random';
 }
 
 /**
@@ -750,6 +775,59 @@ export interface ReorderRequest {
  * Category display configuration
  */
 export type TestCategory = 'happy-path' | 'edge-case' | 'error-handling';
+
+// ============================================================================
+// VERIFICATION TYPES
+// ============================================================================
+
+/**
+ * Result of verifying a single fix by re-running affected tests
+ */
+export interface VerificationResult {
+  fixId: string;
+  testId: string;
+  testName: string;
+  beforeStatus: 'passed' | 'failed' | 'error' | 'skipped';
+  afterStatus: 'passed' | 'failed' | 'error' | 'skipped';
+  effective: boolean;
+  durationMs?: number;
+}
+
+/**
+ * Summary of a verification run
+ */
+export interface VerificationSummary {
+  runId: string;
+  previousRunId: string;
+  fixIds: string[];
+  totalTests: number;
+  improved: number;
+  regressed: number;
+  unchanged: number;
+  overallEffective: boolean;
+  results: VerificationResult[];
+  startedAt: string;
+  completedAt?: string;
+}
+
+/**
+ * Request to verify fixes
+ */
+export interface VerifyFixesRequest {
+  fixIds: string[];
+  testIds?: string[];
+  syncToDisk?: boolean;
+}
+
+/**
+ * Response from verify endpoint
+ */
+export interface VerifyFixesResponse {
+  runId: string;
+  previousRunId: string;
+  testsToRun: string[];
+  status: 'started' | 'completed';
+}
 
 export const CATEGORY_STYLES: Record<TestCategory, {
   border: string;

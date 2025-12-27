@@ -1,11 +1,11 @@
+---
+name: iva-prompt-tuning
+description: Analyze test failures and tune the Flowise IVA prompt to work seamlessly with real users
+---
+
 # IVA Prompt Tuning Skill
 
-## Skill Metadata
-- **Name**: `iva-prompt-tuning`
-- **Trigger Hints**: "tune prompt", "fix bot", "test failed", "bot behavior", "improve iva", "prompt tuning"
-- **Description**: Analyze test failures and tune the Flowise IVA prompt to work seamlessly with real users
-
----
+**Trigger Hints**: "tune prompt", "fix bot", "test failed", "bot behavior", "improve iva", "prompt tuning"
 
 ## CRITICAL MINDSET: The Golden Rule
 

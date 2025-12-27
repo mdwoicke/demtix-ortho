@@ -152,7 +152,12 @@ const RESPONSE_TEMPLATES: Partial<Record<AgentIntent, ResponseTemplate>> = {
   // Booking flow
   'searching_availability': () => 'Okay, thank you',  // Wait while bot searches
   'offering_time_slots': () => 'Yes, that time works',
-  'confirming_booking': () => 'Thank you so much, goodbye!',  // After booking is confirmed
+  'confirming_booking': () => 'Great, thank you!',  // After booking is confirmed - DON'T say goodbye yet
+
+  // Post-booking info
+  'offering_address': () => 'Yes, could you give me the address?',  // User requests address
+  'providing_address': () => 'Thank you, I got the address',         // Acknowledge address received
+  'providing_parking_info': () => 'Perfect, thanks for the parking info!',  // Acknowledge parking info
 
   // Terminal
   'saying_goodbye': () => 'Thank you, goodbye!',

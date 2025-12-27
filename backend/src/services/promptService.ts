@@ -137,15 +137,15 @@ const TEST_AGENT_DB_PATH = path.resolve(__dirname, '../../../test-agent/data/tes
 // Prompt file mappings
 const PROMPT_FILE_MAPPINGS: Record<string, { path: string; displayName: string }> = {
   system_prompt: {
-    path: path.resolve(__dirname, '../../../docs/Chord_Cloud9_SystemPrompt.md'),
+    path: path.resolve(__dirname, '../../../docs/Chord_Cloud9_SystemPrompt_V3_ADVANCED.md'),
     displayName: 'System Prompt',
   },
   scheduling_tool: {
-    path: path.resolve(__dirname, '../../../docs/chord_dso_scheduling-StepwiseSearch.js'),
+    path: path.resolve(__dirname, '../../../docs/chord_dso_scheduling-V3-ENHANCED.js'),
     displayName: 'Scheduling Tool',
   },
   patient_tool: {
-    path: path.resolve(__dirname, '../../../docs/chord_dso_patient-FIXED.js'),
+    path: path.resolve(__dirname, '../../../docs/chord_dso_patient-V3-ENHANCED.js'),
     displayName: 'Patient Tool',
   },
 };
@@ -282,11 +282,23 @@ function validateBraces(content: string): ValidationResult {
 
 /**
  * Validate JavaScript syntax using vm.compileFunction
+ *
+ * BULLETPROOF VALIDATION:
+ * This function performs comprehensive validation to prevent broken code
+ * from being saved. The v2/v3 scheduling tool incident showed that partial
+ * or malformed code can slip through - we now check:
+ * 1. JavaScript syntax (vm.compileFunction)
+ * 2. Required structural patterns (executeRequest, return statement)
+ * 3. Undefined variable references (cleanedParams -> params)
+ * 4. Proper ending (truncation detection)
  */
 function validateJavaScriptSyntax(content: string): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
+  // =========================================================================
+  // STEP 1: Syntax validation using vm.compileFunction
+  // =========================================================================
   try {
     // Wrap in an async function to support await and return statements
     const wrappedCode = `(async function() {\n${content}\n})`;
@@ -298,9 +310,64 @@ function validateJavaScriptSyntax(content: string): ValidationResult {
     errors.push(`JavaScript syntax error at line ${line}: ${error.message}`);
   }
 
-  // Check for common issues that might not be syntax errors
-  if (content.includes('cleanedParams') && !content.includes('const cleanedParams')) {
-    warnings.push('Reference to "cleanedParams" found but not defined - did you mean "params"?');
+  // =========================================================================
+  // STEP 2: Structural validation - check required patterns
+  // =========================================================================
+
+  // Check for required function declaration
+  if (!content.includes('async function executeRequest()')) {
+    errors.push('Missing required "async function executeRequest()" declaration');
+  }
+
+  // Check for proper ending - must end with "return executeRequest();"
+  // This catches truncated files (like v3 which was cut off mid-code)
+  const trimmed = content.trim();
+  if (!trimmed.endsWith('return executeRequest();')) {
+    errors.push(
+      'Code must end with "return executeRequest();". ' +
+      'File appears to be truncated or malformed.'
+    );
+  }
+
+  // Check for action variable (required for tool dispatch)
+  if (!content.includes('const action = $action')) {
+    errors.push('Missing required "const action = $action" declaration');
+  }
+
+  // =========================================================================
+  // STEP 3: Undefined variable detection - CRITICAL FIX for cleanedParams bug
+  // =========================================================================
+  // The v2/v3 bug was caused by referencing 'cleanedParams' which doesn't exist.
+  // This is now an ERROR, not a warning.
+  if (content.includes('cleanedParams') && !content.includes('const cleanedParams') && !content.includes('let cleanedParams')) {
+    errors.push(
+      'Reference to undefined "cleanedParams" variable. ' +
+      'Did you mean "params"? This variable is never declared.'
+    );
+  }
+
+  // =========================================================================
+  // STEP 4: Case block validation - check for duplicate cases
+  // =========================================================================
+  const caseBlocks = content.match(/case\s+'[^']+'\s*:/g) || [];
+  const caseSet = new Set<string>();
+  for (const caseBlock of caseBlocks) {
+    const caseName = caseBlock.match(/case\s+'([^']+)'/)?.[1];
+    if (caseName) {
+      if (caseSet.has(caseName)) {
+        errors.push(`Duplicate case block found: 'case "${caseName}"'`);
+      }
+      caseSet.add(caseName);
+    }
+  }
+
+  // =========================================================================
+  // STEP 5: Additional safety warnings
+  // =========================================================================
+
+  // Warn about potential issues that aren't fatal
+  if (content.includes('// TODO') || content.includes('// FIXME')) {
+    warnings.push('Code contains TODO/FIXME comments - may be incomplete');
   }
 
   return { valid: errors.length === 0, errors, warnings };
@@ -350,6 +417,36 @@ function getWritableDb(): BetterSqlite3.Database {
  */
 function getReadOnlyDb(): BetterSqlite3.Database {
   return new BetterSqlite3(TEST_AGENT_DB_PATH, { readonly: true });
+}
+
+/**
+ * Get the next version number for a prompt file
+ *
+ * IMPORTANT: Always use this function to get the next version number.
+ * This ensures version numbers are unique by checking the MAX version
+ * in the history table, not just the working copy version.
+ *
+ * @param db - Database connection (must be already open)
+ * @param fileKey - The file key to get next version for
+ * @returns The next sequential version number
+ */
+function getNextVersion(db: BetterSqlite3.Database, fileKey: string): number {
+  // Get max version from history table (most reliable source)
+  const historyMax = db.prepare(`
+    SELECT MAX(version) as maxVersion FROM prompt_version_history WHERE file_key = ?
+  `).get(fileKey) as { maxVersion: number | null } | undefined;
+
+  // Get current working copy version as fallback
+  const workingCopy = db.prepare(`
+    SELECT version FROM prompt_working_copies WHERE file_key = ?
+  `).get(fileKey) as { version: number } | undefined;
+
+  // Use the highest of: history max, working copy version, or 0
+  const maxFromHistory = historyMax?.maxVersion || 0;
+  const maxFromWorkingCopy = workingCopy?.version || 0;
+  const maxVersion = Math.max(maxFromHistory, maxFromWorkingCopy);
+
+  return maxVersion + 1;
 }
 
 /**
@@ -542,7 +639,8 @@ export function applyFix(fileKey: string, fixId: string): { newVersion: number; 
       validation.warnings.forEach(warn => console.warn(`  - ${warn}`));
     }
 
-    const newVersion = current.version + 1;
+    // Get next sequential version (ensures no duplicates)
+    const newVersion = getNextVersion(db, fileKey);
     const now = new Date().toISOString();
 
     // Update working copy
@@ -712,7 +810,7 @@ function insertAfterLine(lines: string[], afterLine: string, code: string): stri
 /**
  * Smart insertion - try to detect where the code should go based on its content
  */
-function smartInsert(lines: string[], code: string, targetFile: string): string | null {
+function smartInsert(lines: string[], code: string, _targetFile: string): string | null {
   // Detect if this is a switch case modification
   const caseMatch = code.match(/case\s+['"]([^'"]+)['"]\s*:/);
   if (caseMatch) {
@@ -841,7 +939,7 @@ function insertNearVariable(lines: string[], varName: string, code: string): str
 /**
  * Insert code into an object that has a specific property
  */
-function insertIntoObjectWithProperty(lines: string[], propName: string, code: string): string | null {
+function insertIntoObjectWithProperty(_lines: string[], _propName: string, _code: string): string | null {
   // This is a complex operation - for now, return null and let it fail safe
   return null;
 }
@@ -921,7 +1019,8 @@ export function saveNewVersion(
       );
     }
 
-    const newVersion = current.version + 1;
+    // Get next sequential version (ensures no duplicates)
+    const newVersion = getNextVersion(db, fileKey);
     const now = new Date().toISOString();
 
     // Update working copy
@@ -948,6 +1047,250 @@ export function saveNewVersion(
 }
 
 /**
+ * Apply multiple fixes to their respective target files
+ * Groups fixes by target file and applies them sequentially
+ * Escapes curly braces for Flowise compatibility in non-JS files
+ *
+ * @param fixIds - Array of fix IDs to apply
+ * @returns Results for each fix application
+ */
+export function applyBatchFixes(fixIds: string[]): {
+  results: Array<{
+    fixId: string;
+    success: boolean;
+    fileKey?: string;
+    newVersion?: number;
+    error?: string;
+    warnings?: string[];
+  }>;
+  summary: {
+    total: number;
+    successful: number;
+    failed: number;
+    filesModified: string[];
+  };
+} {
+  // Ensure working copies are initialized
+  initializeWorkingCopies();
+
+  const db = getWritableDb();
+  const results: Array<{
+    fixId: string;
+    success: boolean;
+    fileKey?: string;
+    newVersion?: number;
+    error?: string;
+    warnings?: string[];
+  }> = [];
+  const filesModified = new Set<string>();
+
+  try {
+    // Get all fix details
+    const fixes: Array<{
+      fixId: string;
+      type: string;
+      targetFile: string;
+      changeDescription: string;
+      changeCode: string;
+      location: any;
+    }> = [];
+
+    for (const fixId of fixIds) {
+      const fix = db.prepare(`
+        SELECT fix_id, type, target_file, change_description, change_code, location_json
+        FROM generated_fixes
+        WHERE fix_id = ? AND status = 'pending'
+      `).get(fixId) as any;
+
+      if (!fix) {
+        results.push({
+          fixId,
+          success: false,
+          error: `Fix not found or already applied: ${fixId}`,
+        });
+        continue;
+      }
+
+      fixes.push({
+        fixId: fix.fix_id,
+        type: fix.type,
+        targetFile: fix.target_file,
+        changeDescription: fix.change_description,
+        changeCode: fix.change_code,
+        location: fix.location_json ? JSON.parse(fix.location_json) : null,
+      });
+    }
+
+    // Determine target file key for each fix
+    const fixesWithFileKeys = fixes.map(fix => ({
+      ...fix,
+      fileKey: determineFileKey(fix.targetFile, fix.type),
+    }));
+
+    // Group fixes by file key
+    const fixesByFile = new Map<string, typeof fixesWithFileKeys>();
+    for (const fix of fixesWithFileKeys) {
+      if (!fix.fileKey) {
+        results.push({
+          fixId: fix.fixId,
+          success: false,
+          error: `Could not determine target file for: ${fix.targetFile}`,
+        });
+        continue;
+      }
+
+      const existing = fixesByFile.get(fix.fileKey) || [];
+      existing.push(fix);
+      fixesByFile.set(fix.fileKey, existing);
+    }
+
+    // Apply fixes to each file
+    for (const [fileKey, fileFixes] of fixesByFile) {
+      // Get current working copy
+      const current = db.prepare(`
+        SELECT content, version FROM prompt_working_copies WHERE file_key = ?
+      `).get(fileKey) as any;
+
+      if (!current) {
+        for (const fix of fileFixes) {
+          results.push({
+            fixId: fix.fixId,
+            success: false,
+            error: `Target file not found: ${fileKey}`,
+          });
+        }
+        continue;
+      }
+
+      let workingContent = current.content;
+      // Start from next version minus 1, so first increment gives us the correct next version
+      let currentVersion = getNextVersion(db, fileKey) - 1;
+      const isJavaScriptFile = fileKey.includes('tool') || fileKey.endsWith('.js');
+
+      // Apply each fix to this file sequentially
+      for (const fix of fileFixes) {
+        try {
+          // Merge fix into content
+          let mergedContent = mergeFixIntoContent(workingContent, {
+            fixId: fix.fixId,
+            type: fix.type as 'prompt' | 'tool',
+            targetFile: fix.targetFile,
+            changeDescription: fix.changeDescription,
+            changeCode: fix.changeCode,
+            location: fix.location,
+          });
+
+          // Escape curly braces for Flowise compatibility (only for non-JS files)
+          if (!isJavaScriptFile) {
+            mergedContent = escapeForFlowise(mergedContent);
+          }
+
+          // Validate merged content
+          const validation = validateContent(mergedContent, fileKey);
+
+          if (!validation.valid) {
+            results.push({
+              fixId: fix.fixId,
+              success: false,
+              fileKey,
+              error: `Validation failed: ${validation.errors.join('; ')}`,
+            });
+            continue;
+          }
+
+          // Update working content for next fix
+          workingContent = mergedContent;
+          currentVersion++;
+
+          const now = new Date().toISOString();
+
+          // Update working copy
+          db.prepare(`
+            UPDATE prompt_working_copies
+            SET content = ?, version = ?, last_fix_id = ?, updated_at = ?
+            WHERE file_key = ?
+          `).run(mergedContent, currentVersion, fix.fixId, now, fileKey);
+
+          // Create version history entry
+          db.prepare(`
+            INSERT INTO prompt_version_history (file_key, version, content, fix_id, change_description, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(fileKey, currentVersion, mergedContent, fix.fixId, fix.changeDescription, now);
+
+          // Update fix status to 'applied'
+          db.prepare(`
+            UPDATE generated_fixes SET status = 'applied' WHERE fix_id = ?
+          `).run(fix.fixId);
+
+          filesModified.add(fileKey);
+
+          results.push({
+            fixId: fix.fixId,
+            success: true,
+            fileKey,
+            newVersion: currentVersion,
+            warnings: validation.warnings.length > 0 ? validation.warnings : undefined,
+          });
+        } catch (error: any) {
+          results.push({
+            fixId: fix.fixId,
+            success: false,
+            fileKey,
+            error: error.message,
+          });
+        }
+      }
+    }
+  } finally {
+    db.close();
+  }
+
+  const successful = results.filter(r => r.success).length;
+  const failed = results.filter(r => !r.success).length;
+
+  return {
+    results,
+    summary: {
+      total: fixIds.length,
+      successful,
+      failed,
+      filesModified: Array.from(filesModified),
+    },
+  };
+}
+
+/**
+ * Determine the file key based on target file path and fix type
+ */
+function determineFileKey(targetFile: string, type: string): string | null {
+  const targetLower = targetFile?.toLowerCase() || '';
+
+  // Check for scheduling-related files
+  if (targetLower.includes('schedule') || targetLower.includes('scheduling') || targetLower.includes('appointment')) {
+    return 'scheduling_tool';
+  }
+
+  // Check for patient-related files
+  if (targetLower.includes('patient')) {
+    return 'patient_tool';
+  }
+
+  // Check for system prompt
+  if (targetLower.includes('systemprompt') || targetLower.includes('system_prompt') || targetLower.includes('chord_cloud9')) {
+    return 'system_prompt';
+  }
+
+  // Fallback based on fix type
+  if (type === 'tool') {
+    // Default to scheduling tool for tool fixes
+    return 'scheduling_tool';
+  }
+
+  // Default to system prompt for prompt fixes
+  return 'system_prompt';
+}
+
+/**
  * Reset working copy from disk (discard all changes and reload from source file)
  */
 export function resetFromDisk(fileKey: string): { version: number; content: string } {
@@ -968,7 +1311,8 @@ export function resetFromDisk(fileKey: string): { version: number; content: stri
       SELECT version FROM prompt_working_copies WHERE file_key = ?
     `).get(fileKey) as any;
 
-    const newVersion = current ? current.version + 1 : 1;
+    // Get next sequential version (ensures no duplicates)
+    const newVersion = getNextVersion(db, fileKey);
     const now = new Date().toISOString();
 
     if (current) {
@@ -996,4 +1340,215 @@ export function resetFromDisk(fileKey: string): { version: number; content: stri
   } finally {
     db.close();
   }
+}
+
+// ============================================================================
+// DEPLOYMENT TRACKING
+// ============================================================================
+
+/**
+ * Initialize the deployment tracking table if it doesn't exist
+ */
+function ensureDeploymentTable(db: BetterSqlite3.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS prompt_deployments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      file_key TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      deployed_at TEXT NOT NULL,
+      deployed_by TEXT,
+      notes TEXT,
+      UNIQUE(file_key, version)
+    )
+  `);
+}
+
+/**
+ * Get deployed versions for all prompt files
+ * Returns a map of fileKey -> most recently deployed version
+ */
+export function getDeployedVersions(): Record<string, number> {
+  const db = getWritableDb();
+
+  try {
+    ensureDeploymentTable(db);
+
+    const rows = db.prepare(`
+      SELECT file_key, MAX(version) as version
+      FROM prompt_deployments
+      GROUP BY file_key
+    `).all() as Array<{ file_key: string; version: number }>;
+
+    const result: Record<string, number> = {};
+    for (const row of rows) {
+      result[row.file_key] = row.version;
+    }
+
+    return result;
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Mark a prompt version as deployed to Flowise
+ */
+export function markAsDeployed(
+  fileKey: string,
+  version: number,
+  deployedBy?: string,
+  notes?: string
+): { success: boolean; message: string } {
+  const db = getWritableDb();
+
+  try {
+    ensureDeploymentTable(db);
+
+    const now = new Date().toISOString();
+
+    // Insert or update deployment record
+    db.prepare(`
+      INSERT OR REPLACE INTO prompt_deployments (file_key, version, deployed_at, deployed_by, notes)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(fileKey, version, now, deployedBy || null, notes || null);
+
+    return {
+      success: true,
+      message: `Marked ${fileKey} v${version} as deployed`,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Get deployment history for a prompt file
+ */
+export function getDeploymentHistory(fileKey: string, limit: number = 10): Array<{
+  version: number;
+  deployedAt: string;
+  deployedBy: string | null;
+  notes: string | null;
+}> {
+  const db = getWritableDb();
+
+  try {
+    ensureDeploymentTable(db);
+
+    const rows = db.prepare(`
+      SELECT version, deployed_at, deployed_by, notes
+      FROM prompt_deployments
+      WHERE file_key = ?
+      ORDER BY deployed_at DESC
+      LIMIT ?
+    `).all(fileKey, limit) as Array<{
+      version: number;
+      deployed_at: string;
+      deployed_by: string | null;
+      notes: string | null;
+    }>;
+
+    return rows.map(row => ({
+      version: row.version,
+      deployedAt: row.deployed_at,
+      deployedBy: row.deployed_by,
+      notes: row.notes,
+    }));
+  } finally {
+    db.close();
+  }
+}
+
+// ============================================================================
+// VERSION ROLLBACK (Phase 8)
+// ============================================================================
+
+/**
+ * Rollback to a previous version
+ * Creates a new version with the content from the target version
+ *
+ * @param fileKey - The file key to rollback
+ * @param targetVersion - The version to rollback to
+ * @returns The new version number and rolled back content
+ */
+export function rollbackToVersion(
+  fileKey: string,
+  targetVersion: number
+): { newVersion: number; content: string; originalVersion: number } {
+  // Get the content from the target version
+  const targetContent = getVersionContent(fileKey, targetVersion);
+  if (!targetContent) {
+    throw new Error(`Version ${targetVersion} not found for ${fileKey}`);
+  }
+
+  // Get current version for reference
+  const current = getPromptContent(fileKey);
+  const originalVersion = current?.version || 0;
+
+  // Save as a new version with a rollback description
+  const result = saveNewVersion(
+    fileKey,
+    targetContent,
+    `Rolled back to version ${targetVersion}`
+  );
+
+  return {
+    newVersion: result.newVersion,
+    content: result.content,
+    originalVersion,
+  };
+}
+
+/**
+ * Get diff between two versions
+ * Returns lines that differ between the two versions
+ *
+ * @param fileKey - The file key
+ * @param version1 - First version number
+ * @param version2 - Second version number
+ * @returns Diff summary
+ */
+export function getVersionDiff(
+  fileKey: string,
+  version1: number,
+  version2: number
+): {
+  version1Lines: number;
+  version2Lines: number;
+  addedLines: number;
+  removedLines: number;
+  changedLines: number;
+} {
+  const content1 = getVersionContent(fileKey, version1);
+  const content2 = getVersionContent(fileKey, version2);
+
+  if (!content1 || !content2) {
+    throw new Error('One or both versions not found');
+  }
+
+  const lines1 = content1.split('\n');
+  const lines2 = content2.split('\n');
+
+  // Simple diff: count lines that differ
+  const set1 = new Set(lines1);
+  const set2 = new Set(lines2);
+
+  let addedLines = 0;
+  let removedLines = 0;
+
+  for (const line of lines2) {
+    if (!set1.has(line)) addedLines++;
+  }
+
+  for (const line of lines1) {
+    if (!set2.has(line)) removedLines++;
+  }
+
+  return {
+    version1Lines: lines1.length,
+    version2Lines: lines2.length,
+    addedLines,
+    removedLines,
+    changedLines: Math.min(addedLines, removedLines),
+  };
 }

@@ -20,6 +20,46 @@ import type { GoalOrientedTestCase } from './tests/types/goal-test';
 import type { TestResult } from './storage/database';
 import type { TestSuiteResult } from './core/agent';
 import * as fs from 'fs';
+import BetterSqlite3 from 'better-sqlite3';
+import path from 'path';
+
+/**
+ * Load goal test cases from database (GOAL-EDGE-* and GOAL-ERR-* tests)
+ */
+function loadGoalTestsFromDatabase(): GoalOrientedTestCase[] {
+  const dbPath = path.resolve(__dirname, '../data/test-results.db');
+  if (!fs.existsSync(dbPath)) {
+    console.log('[GoalTest] Database not found, using TypeScript scenarios only');
+    return [];
+  }
+
+  try {
+    const db = new BetterSqlite3(dbPath, { readonly: true });
+    const rows = db.prepare(`
+      SELECT case_id, name, description, category, tags_json, persona_json,
+             goals_json, constraints_json, response_config_json, initial_message
+      FROM goal_test_cases
+      WHERE is_archived = 0 AND (case_id LIKE 'GOAL-EDGE-%' OR case_id LIKE 'GOAL-ERR-%')
+    `).all() as any[];
+    db.close();
+
+    return rows.map((row: any) => ({
+      id: row.case_id,
+      name: row.name,
+      description: row.description,
+      category: row.category,
+      tags: JSON.parse(row.tags_json || '[]'),
+      persona: JSON.parse(row.persona_json),
+      goals: JSON.parse(row.goals_json),
+      constraints: JSON.parse(row.constraints_json || '[]'),
+      responseConfig: JSON.parse(row.response_config_json),
+      initialMessage: row.initial_message,
+    }));
+  } catch (error: any) {
+    console.log(`[GoalTest] Error loading from database: ${error.message}`);
+    return [];
+  }
+}
 
 /**
  * Run goal-oriented tests
@@ -32,8 +72,10 @@ async function runGoalTests(
   console.log('\n=== Goal-Oriented Test Runner ===\n');
   console.log(`Running ${scenarioIds.length} goal test(s) with concurrency ${concurrency}\n`);
 
-  // Get all available goal scenarios
-  const allGoalScenarios: GoalOrientedTestCase[] = [...goalHappyPathScenarios];
+  // Get all available goal scenarios (TypeScript + database)
+  const dbScenarios = loadGoalTestsFromDatabase();
+  const allGoalScenarios: GoalOrientedTestCase[] = [...goalHappyPathScenarios, ...dbScenarios];
+  console.log(`[GoalTest] Loaded ${goalHappyPathScenarios.length} TS scenarios + ${dbScenarios.length} DB scenarios`);
 
   // Map scenario IDs to actual scenarios (preserving duplicates for run count feature)
   // This allows the same scenario to run multiple times when requested
@@ -86,7 +128,8 @@ async function runGoalTests(
     const runner = new GoalTestRunner(flowiseClient, db, intentDetector);
 
     try {
-      const result = await runner.runTest(scenario, runId);
+      // Pass testIdWithRun to ensure multiple runs of same test are stored separately
+      const result = await runner.runTest(scenario, runId, testIdWithRun);
 
       const testResult: TestResult = {
         runId,

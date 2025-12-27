@@ -13,6 +13,7 @@ import testMonitorReducer from './slices/testMonitorSlice';
 import testExecutionReducer from './slices/testExecutionSlice';
 import testCasesReducer from './slices/testCasesSlice';
 import goalTestCasesReducer from './slices/goalTestCasesSlice';
+import createGoalTestReducer from './slices/createGoalTestSlice';
 
 /**
  * Configure and create the Redux store
@@ -28,6 +29,7 @@ export const store = configureStore({
     testExecution: testExecutionReducer,
     testCases: testCasesReducer,
     goalTestCases: goalTestCasesReducer,
+    createGoalTest: createGoalTestReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

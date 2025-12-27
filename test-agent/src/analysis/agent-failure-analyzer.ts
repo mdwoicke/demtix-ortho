@@ -117,7 +117,8 @@ export class AgentFailureAnalyzer {
           result.fixes,
           runId,
           context.testId,
-          result.rootCause
+          result.rootCause,
+          result.classification
         );
 
         allFixes.push(...generatedFixes);
@@ -193,7 +194,8 @@ export class AgentFailureAnalyzer {
       result.fixes,
       runId,
       testId,
-      result.rootCause
+      result.rootCause,
+      result.classification
     );
   }
 
@@ -247,7 +249,14 @@ export class AgentFailureAnalyzer {
     fixes: (PromptFix | ToolFix)[],
     runId: string,
     testId: string,
-    rootCause: { type: string; evidence: string[] }
+    rootCause: { type: string; evidence: string[] },
+    classification?: {
+      issueLocation: 'bot' | 'test-agent' | 'both';
+      confidence: number;
+      reasoning: string;
+      userBehaviorRealistic: boolean;
+      botResponseAppropriate: boolean;
+    }
   ): GeneratedFix[] {
     return fixes.map(fix => ({
       fixId: `fix-${uuidv4().slice(0, 8)}`,
@@ -264,40 +273,244 @@ export class AgentFailureAnalyzer {
         type: rootCause.type,
         evidence: rootCause.evidence,
       },
+      classification,
       status: 'pending' as const,
       createdAt: new Date().toISOString(),
     }));
   }
 
   private deduplicateFixes(fixes: GeneratedFix[]): GeneratedFix[] {
-    const seen = new Map<string, GeneratedFix>();
+    if (fixes.length === 0) return [];
 
+    // Group fixes by target file first
+    const byFile = new Map<string, GeneratedFix[]>();
     for (const fix of fixes) {
-      const key = `${fix.targetFile}:${fix.changeDescription}`;
-      const existing = seen.get(key);
+      const existing = byFile.get(fix.targetFile) || [];
+      existing.push(fix);
+      byFile.set(fix.targetFile, existing);
+    }
 
-      if (!existing) {
-        seen.set(key, fix);
-      } else {
-        // Merge affected tests
-        const mergedTests = [...new Set([...existing.affectedTests, ...fix.affectedTests])];
-        existing.affectedTests = mergedTests;
+    const deduplicatedFixes: GeneratedFix[] = [];
 
-        // Keep higher confidence
-        if (fix.confidence > existing.confidence) {
-          existing.confidence = fix.confidence;
-          existing.changeCode = fix.changeCode;
-        }
-      }
+    // Process each file group
+    for (const [_targetFile, fileFixes] of byFile) {
+      const merged = this.mergeOverlappingFixes(fileFixes);
+      deduplicatedFixes.push(...merged);
     }
 
     // Sort by priority then confidence
     const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
-    return Array.from(seen.values()).sort((a, b) => {
+    return deduplicatedFixes.sort((a, b) => {
       const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
       if (priorityDiff !== 0) return priorityDiff;
       return b.confidence - a.confidence;
     });
+  }
+
+  /**
+   * Merge fixes that semantically overlap (address the same issue)
+   * Uses key phrase extraction and similarity scoring
+   */
+  private mergeOverlappingFixes(fixes: GeneratedFix[]): GeneratedFix[] {
+    if (fixes.length <= 1) return fixes;
+
+    // Extract key phrases from each fix
+    const fixesWithPhrases = fixes.map(fix => ({
+      fix,
+      phrases: this.extractKeyPhrases(fix.changeDescription),
+      codeSignature: this.extractCodeSignature(fix.changeCode),
+    }));
+
+    // Find groups of similar fixes
+    const groups: GeneratedFix[][] = [];
+    const used = new Set<number>();
+
+    for (let i = 0; i < fixesWithPhrases.length; i++) {
+      if (used.has(i)) continue;
+
+      const group: GeneratedFix[] = [fixesWithPhrases[i].fix];
+      used.add(i);
+
+      for (let j = i + 1; j < fixesWithPhrases.length; j++) {
+        if (used.has(j)) continue;
+
+        const similarity = this.calculateFixSimilarity(
+          fixesWithPhrases[i],
+          fixesWithPhrases[j]
+        );
+
+        // If similarity is above threshold, they're addressing the same issue
+        if (similarity >= 0.4) {
+          group.push(fixesWithPhrases[j].fix);
+          used.add(j);
+          console.log(`    [Dedup] Merging overlapping fixes (similarity: ${(similarity * 100).toFixed(0)}%):`);
+          console.log(`      - "${fixesWithPhrases[i].fix.changeDescription.slice(0, 60)}..."`);
+          console.log(`      - "${fixesWithPhrases[j].fix.changeDescription.slice(0, 60)}..."`);
+        }
+      }
+
+      groups.push(group);
+    }
+
+    // For each group, keep the best fix and merge affected tests
+    return groups.map(group => this.selectBestFix(group));
+  }
+
+  /**
+   * Extract key phrases from a fix description for comparison
+   */
+  private extractKeyPhrases(description: string): Set<string> {
+    const phrases = new Set<string>();
+    const text = description.toLowerCase();
+
+    // Extract quoted phrases (e.g., 'anything else', 'Yes')
+    const quotedMatches = text.match(/['"]([^'"]+)['"]/g) || [];
+    quotedMatches.forEach(m => phrases.add(m.replace(/['"]/g, '').trim()));
+
+    // Extract key concept words (filtering out common words)
+    const stopWords = new Set([
+      'add', 'for', 'to', 'the', 'a', 'an', 'in', 'of', 'and', 'or', 'with',
+      'when', 'that', 'this', 'is', 'are', 'be', 'been', 'being', 'have', 'has',
+      'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may',
+      'might', 'must', 'shall', 'can', 'need', 'explicit', 'new', 'handling',
+      'handle', 'rule', 'exception', 'context', 'response', 'responses',
+    ]);
+
+    // Extract meaningful words
+    const words = text
+      .replace(/['"]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 2 && !stopWords.has(w));
+
+    words.forEach(w => phrases.add(w));
+
+    // Extract bigrams (two-word phrases) for better matching
+    for (let i = 0; i < words.length - 1; i++) {
+      phrases.add(`${words[i]} ${words[i + 1]}`);
+    }
+
+    return phrases;
+  }
+
+  /**
+   * Extract a signature from the code change for comparison
+   */
+  private extractCodeSignature(code: string): Set<string> {
+    const signature = new Set<string>();
+    const text = code.toLowerCase();
+
+    // Extract XML section names
+    const sectionMatches = text.match(/<([a-z_]+)[^>]*>/gi) || [];
+    sectionMatches.forEach(m => {
+      const name = m.replace(/<\/?|\s.*|>/g, '');
+      if (name) signature.add(`section:${name}`);
+    });
+
+    // Extract function names
+    const funcMatches = text.match(/function\s+(\w+)/gi) || [];
+    funcMatches.forEach(m => {
+      const name = m.replace(/function\s+/i, '');
+      if (name) signature.add(`func:${name}`);
+    });
+
+    // Extract case statements
+    const caseMatches = text.match(/case\s+['"]([^'"]+)['"]/gi) || [];
+    caseMatches.forEach(m => {
+      const name = m.replace(/case\s+['"]/i, '').replace(/['"]$/, '');
+      if (name) signature.add(`case:${name}`);
+    });
+
+    // Extract quoted strings that might be key identifiers
+    const quotedMatches = text.match(/['"]([^'"]{3,30})['"]/g) || [];
+    quotedMatches.forEach(m => {
+      const content = m.replace(/['"]/g, '').trim();
+      if (content && !content.includes(' ')) {
+        signature.add(`id:${content}`);
+      }
+    });
+
+    return signature;
+  }
+
+  /**
+   * Calculate similarity between two fixes
+   * Returns a score from 0 to 1
+   */
+  private calculateFixSimilarity(
+    fix1: { fix: GeneratedFix; phrases: Set<string>; codeSignature: Set<string> },
+    fix2: { fix: GeneratedFix; phrases: Set<string>; codeSignature: Set<string> }
+  ): number {
+    // Must be same type (prompt/tool) to be considered similar
+    if (fix1.fix.type !== fix2.fix.type) return 0;
+
+    // Calculate phrase overlap (Jaccard similarity)
+    const phraseIntersection = new Set(
+      [...fix1.phrases].filter(x => fix2.phrases.has(x))
+    );
+    const phraseUnion = new Set([...fix1.phrases, ...fix2.phrases]);
+    const phraseSimilarity = phraseUnion.size > 0
+      ? phraseIntersection.size / phraseUnion.size
+      : 0;
+
+    // Calculate code signature overlap
+    const codeIntersection = new Set(
+      [...fix1.codeSignature].filter(x => fix2.codeSignature.has(x))
+    );
+    const codeUnion = new Set([...fix1.codeSignature, ...fix2.codeSignature]);
+    const codeSimilarity = codeUnion.size > 0
+      ? codeIntersection.size / codeUnion.size
+      : 0;
+
+    // Check for same location (section/function)
+    let locationMatch = 0;
+    if (fix1.fix.location && fix2.fix.location) {
+      if (fix1.fix.location.section && fix1.fix.location.section === fix2.fix.location.section) {
+        locationMatch = 0.3;
+      }
+      if (fix1.fix.location.function && fix1.fix.location.function === fix2.fix.location.function) {
+        locationMatch = 0.3;
+      }
+    }
+
+    // Weighted combination
+    // Phrase similarity is most important for detecting semantic overlap
+    const similarity = (phraseSimilarity * 0.5) + (codeSimilarity * 0.3) + locationMatch;
+
+    return Math.min(similarity, 1);
+  }
+
+  /**
+   * Select the best fix from a group of similar fixes
+   * Merges affected tests from all fixes
+   */
+  private selectBestFix(group: GeneratedFix[]): GeneratedFix {
+    if (group.length === 1) return group[0];
+
+    // Sort by priority (critical first) then confidence (highest first)
+    const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+    const sorted = [...group].sort((a, b) => {
+      const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
+      if (priorityDiff !== 0) return priorityDiff;
+      return b.confidence - a.confidence;
+    });
+
+    // Take the best one
+    const best = { ...sorted[0] };
+
+    // Merge affected tests from all fixes in the group
+    const allAffectedTests = new Set<string>();
+    for (const fix of group) {
+      fix.affectedTests.forEach(t => allAffectedTests.add(t));
+    }
+    best.affectedTests = Array.from(allAffectedTests);
+
+    // Slightly boost confidence when multiple similar fixes were generated
+    // (suggests higher agreement on the issue)
+    if (group.length > 1) {
+      best.confidence = Math.min(best.confidence + 0.05, 1);
+    }
+
+    return best;
   }
 
   private createEmptyReport(runId: string): AnalysisReport {

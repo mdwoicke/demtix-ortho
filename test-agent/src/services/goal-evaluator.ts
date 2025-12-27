@@ -97,21 +97,31 @@ export class GoalEvaluator {
     context: GoalContext,
     progress: ProgressState
   ): GoalResult {
+    // FIRST: Check if this goal was already completed during the conversation
+    // This is important because state may change after goal completion
+    if (progress.completedGoals.includes(goal.id)) {
+      return {
+        goalId: goal.id,
+        passed: true,
+        message: `Goal completed during conversation`,
+      };
+    }
+
     switch (goal.type) {
       case 'data_collection':
         return this.evaluateDataCollectionGoal(goal, progress);
 
       case 'booking_confirmed':
-        return this.evaluateBookingGoal(context, progress);
+        return this.evaluateBookingGoal(goal.id, context, progress);
 
       case 'transfer_initiated':
-        return this.evaluateTransferGoal(context, progress);
+        return this.evaluateTransferGoal(goal.id, context, progress);
 
       case 'conversation_ended':
-        return this.evaluateConversationEndedGoal(progress);
+        return this.evaluateConversationEndedGoal(goal.id, progress);
 
       case 'error_handled':
-        return this.evaluateErrorHandledGoal(context, progress);
+        return this.evaluateErrorHandledGoal(goal.id, context, progress);
 
       case 'custom':
         if (goal.successCriteria) {
@@ -166,15 +176,19 @@ export class GoalEvaluator {
    * Evaluate booking confirmed goal
    */
   private evaluateBookingGoal(
+    goalId: string,
     context: GoalContext,
     progress: ProgressState
   ): GoalResult {
-    const confirmed = context.agentConfirmedBooking ||
+    // Check multiple sources - bookingConfirmed is a persistent flag that survives
+    // subsequent intents like saying_goodbye after booking is complete
+    const confirmed = progress.bookingConfirmed ||  // Persistent flag set when confirming_booking detected
+      context.agentConfirmedBooking ||
       progress.currentFlowState === 'confirmation' ||
-      progress.completedGoals.includes('booking-confirmed');
+      progress.completedGoals.includes(goalId);
 
     return {
-      goalId: 'booking-confirmed',
+      goalId,
       passed: confirmed,
       message: confirmed
         ? 'Agent confirmed the booking'
@@ -186,15 +200,16 @@ export class GoalEvaluator {
    * Evaluate transfer initiated goal
    */
   private evaluateTransferGoal(
+    goalId: string,
     context: GoalContext,
     progress: ProgressState
   ): GoalResult {
     const transferred = context.agentInitiatedTransfer ||
       progress.currentFlowState === 'transfer' ||
-      progress.completedGoals.includes('transfer-initiated');
+      progress.completedGoals.includes(goalId);
 
     return {
-      goalId: 'transfer-initiated',
+      goalId,
       passed: transferred,
       message: transferred
         ? 'Agent transferred to live agent'
@@ -205,12 +220,12 @@ export class GoalEvaluator {
   /**
    * Evaluate conversation ended goal
    */
-  private evaluateConversationEndedGoal(progress: ProgressState): GoalResult {
+  private evaluateConversationEndedGoal(goalId: string, progress: ProgressState): GoalResult {
     const ended = progress.currentFlowState === 'ended' ||
       progress.lastAgentIntent === 'saying_goodbye';
 
     return {
-      goalId: 'conversation-ended',
+      goalId,
       passed: ended,
       message: ended
         ? 'Conversation ended properly with goodbye'
@@ -222,6 +237,7 @@ export class GoalEvaluator {
    * Evaluate error handled goal
    */
   private evaluateErrorHandledGoal(
+    goalId: string,
     context: GoalContext,
     progress: ProgressState
   ): GoalResult {
@@ -231,7 +247,7 @@ export class GoalEvaluator {
       progress.completedGoals.length > 0;
 
     return {
-      goalId: 'error-handled',
+      goalId,
       passed: !hadErrors || handledGracefully,
       message: hadErrors
         ? (handledGracefully ? 'Errors were handled gracefully' : 'Errors were not handled properly')
@@ -396,10 +412,13 @@ export class GoalEvaluator {
     return {
       collectedData: progress.collectedFields as Map<CollectableField, any>,
       conversationHistory,
+      // Include persistent flags that survive subsequent intents
       agentConfirmedBooking:
+        progress.bookingConfirmed ||  // Persistent flag
         progress.lastAgentIntent === 'confirming_booking' ||
         progress.currentFlowState === 'confirmation',
       agentInitiatedTransfer:
+        progress.transferInitiated ||  // Persistent flag
         progress.lastAgentIntent === 'initiating_transfer' ||
         progress.currentFlowState === 'transfer',
       turnCount: progress.turnNumber,

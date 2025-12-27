@@ -9,7 +9,7 @@ import { clsx } from 'clsx';
 
 import { PersonaEditor } from '../../components/features/testCases/PersonaEditor';
 import { GoalsEditor } from '../../components/features/testCases/GoalsEditor';
-import { ConstraintsEditor } from '../../components/features/testCases/ConstraintsEditor';
+import { ResponseConfigEditor } from '../../components/features/testCases/ResponseConfigEditor';
 
 import type { AppDispatch, RootState } from '../../store/store';
 import {
@@ -971,6 +971,16 @@ export function GoalTestCasesPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    {/* Close button */}
+                    <button
+                      onClick={() => { dispatch(cancelEditing()); dispatch(selectTestCase('')); }}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      title="Close"
+                    >
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
                     {editingTestCase ? (
                       <>
                         <button
@@ -999,7 +1009,7 @@ export function GoalTestCasesPage() {
                           disabled={running}
                           className={clsx(
                             'inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg',
-                            'bg-emerald-500 hover:bg-emerald-600 text-white',
+                            'bg-blue-500 hover:bg-blue-600 text-white',
                             'disabled:opacity-50 disabled:cursor-not-allowed'
                           )}
                         >
@@ -1011,7 +1021,7 @@ export function GoalTestCasesPage() {
                           ) : (
                             <>
                               <Icons.Play />
-                              Run Test
+                              Run
                             </>
                           )}
                         </button>
@@ -1058,8 +1068,8 @@ export function GoalTestCasesPage() {
                   />
                 )}
                 {activeTab === 'config' && (
-                  <ConstraintsEditor
-                    constraints={activeTestCase.responseConfig}
+                  <ResponseConfigEditor
+                    responseConfig={activeTestCase.responseConfig}
                     onChange={handleConstraintsChange}
                     readOnly={!editingTestCase}
                   />

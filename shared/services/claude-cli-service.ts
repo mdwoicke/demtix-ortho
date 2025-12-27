@@ -3,7 +3,10 @@
  * Wraps the Claude CLI as a subprocess for LLM operations
  */
 
-import { spawn } from 'child_process';
+import { execSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 
 // ============================================================================
 // Types
@@ -43,7 +46,7 @@ export class ClaudeCliService {
   private static instance: ClaudeCliService;
   private statusCache: ClaudeCliStatus | null = null;
   private statusCacheTime: number = 0;
-  private readonly STATUS_CACHE_TTL = 60000; // 1 minute
+  private readonly STATUS_CACHE_TTL = 600000; // 10 minutes (prevent mid-diagnosis fallbacks)
 
   static getInstance(): ClaudeCliService {
     if (!ClaudeCliService.instance) {
@@ -74,14 +77,15 @@ export class ClaudeCliService {
         return this.statusCache;
       }
 
-      // Check if authenticated by running a minimal prompt
+      // Check if authenticated by running a minimal prompt via temp file
+      const tempFile = path.join(os.tmpdir(), `claude-auth-check-${Date.now()}.txt`);
+      fs.writeFileSync(tempFile, 'respond with only: ok', 'utf8');
       const authResult = await this.runCommand([
         '--print',
         '--output-format', 'json',
-        '--no-session-persistence',
         '--model', 'haiku',
-        '-p', 'respond with only: ok'
-      ], 15000);
+      ], 15000, tempFile);
+      try { fs.unlinkSync(tempFile); } catch { /* ignore */ }
 
       this.statusCache = {
         installed: true,
@@ -116,11 +120,25 @@ export class ClaudeCliService {
    */
   async execute(request: ClaudeCliRequest): Promise<ClaudeCliResponse> {
     const startTime = Date.now();
-    const args = this.buildArgs(request);
+    const buildResult = this.buildArgs(request);
+    const { args, tempFile } = buildResult;
+    const usePipe = 'usePipe' in buildResult && buildResult.usePipe;
     const timeout = request.timeout || 120000;
 
+    // Helper to clean up temp file
+    const cleanup = () => {
+      if (tempFile) {
+        try {
+          fs.unlinkSync(tempFile);
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+    };
+
     try {
-      const result = await this.runCommand(args, timeout, request.prompt);
+      const result = await this.runCommand(args, timeout, usePipe ? tempFile : undefined);
+      cleanup();
       const durationMs = Date.now() - startTime;
 
       if (!result.success) {
@@ -156,6 +174,7 @@ export class ClaudeCliService {
       }
 
     } catch (error: any) {
+      cleanup();
       return {
         success: false,
         error: error.message,
@@ -166,12 +185,13 @@ export class ClaudeCliService {
 
   /**
    * Build CLI arguments from request
+   * Returns args array and optional temp file path (caller must clean up)
+   * Always uses temp file approach to avoid shell escaping issues on Windows
    */
-  private buildArgs(request: ClaudeCliRequest): string[] {
+  private buildArgs(request: ClaudeCliRequest): { args: string[]; tempFile?: string; usePipe?: boolean } {
     const args: string[] = [
       '--print',                    // Non-interactive mode
       '--output-format', 'json',    // JSON output for parsing
-      '--no-session-persistence',   // Don't persist context between calls
     ];
 
     // Add model if specified
@@ -184,13 +204,12 @@ export class ClaudeCliService {
       args.push('--system-prompt', request.systemPrompt);
     }
 
-    // Disable all tools for pure LLM inference
-    args.push('--allowedTools', '');
-
-    // Add the prompt via -p flag (prompt will also be piped via stdin as fallback)
-    args.push('-p', request.prompt);
-
-    return args;
+    // Always use temp file approach to avoid shell escaping issues
+    // This is more reliable on Windows where shell escaping is complex
+    const tempFile = path.join(os.tmpdir(), `claude-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
+    fs.writeFileSync(tempFile, request.prompt, 'utf8');
+    // Don't add -p flag - prompt will be piped via stdin from temp file
+    return { args, tempFile, usePipe: true };
   }
 
   /**
@@ -208,75 +227,70 @@ export class ClaudeCliService {
 
   /**
    * Run a CLI command and return the result
+   * Uses execSync which works reliably on Windows (spawn with pipes hangs)
    */
   private runCommand(
     args: string[],
     timeout: number = 30000,
-    stdin?: string
+    pipeFromFile?: string // Optional file path to pipe content from
   ): Promise<{ success: boolean; result?: string; error?: string }> {
     return new Promise((resolve) => {
       const isWindows = process.platform === 'win32';
-      const command = isWindows ? 'claude.cmd' : 'claude';
+      // On Windows, need to use claude.cmd and run via shell for proper PATH resolution
+      const command = 'claude';
 
-      let child;
+      // Build command string
+      const fullCommand = `${command} ${args.map(arg => {
+        // Quote arguments containing spaces or special characters
+        if (arg.includes(' ') || arg.includes('"') || arg.includes("'")) {
+          return `"${arg.replace(/"/g, '\\"')}"`;
+        }
+        return arg;
+      }).join(' ')}`;
+
       try {
-        child = spawn(command, args, {
-          shell: isWindows,
-          stdio: ['pipe', 'pipe', 'pipe'],
-          env: { ...process.env },
-        });
-      } catch (spawnError: any) {
-        resolve({ success: false, error: `Failed to spawn Claude CLI: ${spawnError.message}` });
-        return;
-      }
-
-      let stdout = '';
-      let stderr = '';
-      let timedOut = false;
-
-      // Set up timeout
-      const timeoutId = setTimeout(() => {
-        timedOut = true;
-        child.kill('SIGTERM');
-        setTimeout(() => child.kill('SIGKILL'), 1000);
-      }, timeout);
-
-      child.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      child.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      child.on('error', (error) => {
-        clearTimeout(timeoutId);
-        resolve({ success: false, error: error.message });
-      });
-
-      child.on('close', (code) => {
-        clearTimeout(timeoutId);
-
-        if (timedOut) {
-          resolve({ success: false, error: `Command timed out after ${timeout}ms` });
-          return;
+        // Build the shell command
+        let shellCommand: string;
+        if (isWindows) {
+          if (pipeFromFile) {
+            // Pipe content from file to claude on Windows
+            shellCommand = `cmd.exe /c type "${pipeFromFile}" | ${fullCommand}`;
+          } else {
+            shellCommand = `cmd.exe /c ${fullCommand}`;
+          }
+        } else {
+          if (pipeFromFile) {
+            // Pipe content from file to claude on Unix
+            shellCommand = `cat "${pipeFromFile}" | ${fullCommand}`;
+          } else {
+            shellCommand = fullCommand;
+          }
         }
 
-        if (code === 0) {
-          resolve({ success: true, result: stdout });
-        } else {
+        const result = execSync(shellCommand, {
+          encoding: 'utf8',
+          timeout,
+          env: { ...process.env },
+          stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true,
+        });
+
+        resolve({ success: true, result: result.toString() });
+      } catch (error: any) {
+        // execSync throws on non-zero exit code or timeout
+        if (error.killed) {
+          resolve({ success: false, error: `Command timed out after ${timeout}ms` });
+        } else if (error.status !== undefined) {
+          // Process exited with non-zero code
           resolve({
             success: false,
-            error: stderr || `Exit code: ${code}`,
-            result: stdout // Include stdout even on error for debugging
+            error: error.stderr?.toString() || `Exit code: ${error.status}`,
+            result: error.stdout?.toString(), // Include stdout for debugging
           });
+        } else {
+          // Other error (e.g., command not found)
+          resolve({ success: false, error: error.message });
         }
-      });
-
-      // Send prompt via stdin if provided (as backup to -p flag)
-      if (stdin && child.stdin) {
-        child.stdin.write(stdin);
-        child.stdin.end();
       }
     });
   }

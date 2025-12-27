@@ -201,6 +201,21 @@ export function AppointmentCard({
           </div>
         )}
 
+        {/* Scheduled At */}
+        {appointment.scheduled_at && (
+          <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg mb-4">
+            <div className="flex-shrink-0 w-8 h-8 bg-white rounded-lg shadow-sm flex items-center justify-center">
+              📋
+            </div>
+            <div>
+              <p className="text-xs text-gray-500 font-medium uppercase mb-1">Booked On</p>
+              <p className="text-sm font-semibold text-gray-700">
+                {formatDate(appointment.scheduled_at, 'MMM d, yyyy')} at {formatTime(appointment.scheduled_at)}
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Past Appointment Indicator */}
         {isPast && (
           <div className="flex items-center gap-2 p-3 bg-gray-100 rounded-lg mb-4">

@@ -110,6 +110,7 @@ export const MICHAEL_DAVIS: UserPersona = {
 /**
  * Jane Smith - Quick info provider
  * Matches HAPPY-003 test data
+ * Changed to NORMAL_TRAITS to avoid LLM dependency for verbose responses
  */
 export const JANE_SMITH: UserPersona = {
   name: 'Jane Smith',
@@ -133,10 +134,10 @@ export const JANE_SMITH: UserPersona = {
     previousVisitToOffice: false,
     previousOrthoTreatment: false,
     preferredLocation: 'Alleghany',
-    // Simpler time preference - let bot calculate dates
-    preferredTimeOfDay: 'morning',
+    // Flexible time preference - any time works
+    preferredTimeOfDay: 'any',
   },
-  traits: VERBOSE_TRAITS,
+  traits: NORMAL_TRAITS,
 };
 
 /**

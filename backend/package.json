@@ -18,6 +18,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
     "axios": "^1.6.7",
     "better-sqlite3": "^9.4.0",
     "cors": "^2.8.5",

@@ -17,8 +17,33 @@ import type {
   GeneratedFix,
   PromptFile,
   PromptVersionHistory,
+  VerificationSummary,
 } from '../../types/testMonitor.types';
 import * as testMonitorApi from '../../services/api/testMonitorApi';
+import type { DiagnosisResult } from '../../services/api/testMonitorApi';
+
+// Diagnosis state interface
+interface DiagnosisState {
+  isRunning: boolean;
+  progress: { analyzed: number; total: number };
+  lastResult: DiagnosisResult | null;
+  useLLM: boolean;
+  error: string | null;
+}
+
+// Verification state interface
+interface VerificationState {
+  isRunning: boolean;
+  lastResult: VerificationSummary | null;
+  error: string | null;
+}
+
+// Deployment state interface (Phase 5: Flowise Sync)
+interface DeploymentState {
+  deployedVersions: Record<string, number>;
+  loading: boolean;
+  error: string | null;
+}
 import { handleError, logError } from '../../services/utils/errorHandler';
 
 interface TestMonitorState {
@@ -43,6 +68,12 @@ interface TestMonitorState {
   promptContent: Record<string, string>;
   promptHistory: PromptVersionHistory[];
   promptLoading: boolean;
+  // Diagnosis state
+  diagnosis: DiagnosisState;
+  // Verification state
+  verification: VerificationState;
+  // Deployment state (Phase 5: Flowise Sync)
+  deployment: DeploymentState;
 }
 
 const initialState: TestMonitorState = {
@@ -67,6 +98,26 @@ const initialState: TestMonitorState = {
   promptContent: {},
   promptHistory: [],
   promptLoading: false,
+  // Diagnosis state
+  diagnosis: {
+    isRunning: false,
+    progress: { analyzed: 0, total: 0 },
+    lastResult: null,
+    useLLM: true,
+    error: null,
+  },
+  // Verification state
+  verification: {
+    isRunning: false,
+    lastResult: null,
+    error: null,
+  },
+  // Deployment state (Phase 5: Flowise Sync)
+  deployment: {
+    deployedVersions: {},
+    loading: false,
+    error: null,
+  },
 };
 
 // Async Thunks
@@ -208,6 +259,86 @@ export const updateFixStatus = createAsyncThunk(
 );
 
 // ============================================================================
+// DIAGNOSIS THUNKS
+// ============================================================================
+
+/**
+ * Run LLM-powered diagnosis on test failures and generate fixes
+ */
+export const runDiagnosis = createAsyncThunk(
+  'testMonitor/runDiagnosis',
+  async ({ runId, useLLM = true }: { runId: string; useLLM?: boolean }, { rejectWithValue }) => {
+    try {
+      const result = await testMonitorApi.runDiagnosis(runId, { useLLM });
+      return result;
+    } catch (error) {
+      logError(error, 'runDiagnosis');
+      const formattedError = handleError(error, 'Failed to run diagnosis');
+      return rejectWithValue(formattedError.message);
+    }
+  }
+);
+
+// ============================================================================
+// VERIFICATION THUNKS
+// ============================================================================
+
+/**
+ * Verify fixes by re-running affected tests
+ */
+export const verifyFixes = createAsyncThunk(
+  'testMonitor/verifyFixes',
+  async (fixIds: string[], { rejectWithValue }) => {
+    try {
+      const result = await testMonitorApi.verifyFixes(fixIds);
+      return result;
+    } catch (error) {
+      logError(error, 'verifyFixes');
+      const formattedError = handleError(error, 'Failed to verify fixes');
+      return rejectWithValue(formattedError.message);
+    }
+  }
+);
+
+// ============================================================================
+// DEPLOYMENT TRACKING THUNKS (Phase 5: Flowise Sync)
+// ============================================================================
+
+/**
+ * Fetch deployed versions for all prompt files
+ */
+export const fetchDeployedVersions = createAsyncThunk(
+  'testMonitor/fetchDeployedVersions',
+  async (_, { rejectWithValue }) => {
+    try {
+      const versions = await testMonitorApi.getDeployedVersions();
+      return versions;
+    } catch (error) {
+      logError(error, 'fetchDeployedVersions');
+      const formattedError = handleError(error, 'Failed to fetch deployed versions');
+      return rejectWithValue(formattedError.message);
+    }
+  }
+);
+
+/**
+ * Mark a prompt version as deployed to Flowise
+ */
+export const markPromptDeployed = createAsyncThunk(
+  'testMonitor/markPromptDeployed',
+  async ({ fileKey, version, notes }: { fileKey: string; version: number; notes?: string }, { rejectWithValue }) => {
+    try {
+      await testMonitorApi.markPromptAsDeployed(fileKey, version, notes);
+      return { fileKey, version };
+    } catch (error) {
+      logError(error, 'markPromptDeployed');
+      const formattedError = handleError(error, 'Failed to mark prompt as deployed');
+      return rejectWithValue(formattedError.message);
+    }
+  }
+);
+
+// ============================================================================
 // PROMPT VERSION MANAGEMENT THUNKS
 // ============================================================================
 
@@ -274,6 +405,24 @@ export const applyFixToPrompt = createAsyncThunk(
     } catch (error) {
       logError(error, 'applyFixToPrompt');
       const formattedError = handleError(error, 'Failed to apply fix to prompt');
+      return rejectWithValue(formattedError.message);
+    }
+  }
+);
+
+/**
+ * Apply multiple fixes to their respective target files
+ * Handles automatic file detection and curly brace escaping for Flowise
+ */
+export const applyBatchFixes = createAsyncThunk(
+  'testMonitor/applyBatchFixes',
+  async (fixIds: string[], { rejectWithValue }) => {
+    try {
+      const result = await testMonitorApi.applyBatchFixes(fixIds);
+      return result;
+    } catch (error) {
+      logError(error, 'applyBatchFixes');
+      const formattedError = handleError(error, 'Failed to apply batch fixes');
       return rejectWithValue(formattedError.message);
     }
   }
@@ -591,6 +740,131 @@ export const testMonitorSlice = createSlice({
         state.promptLoading = false;
         state.error = action.payload as string;
       });
+
+    // Apply Batch Fixes
+    builder
+      .addCase(applyBatchFixes.pending, (state) => {
+        state.promptLoading = true;
+      })
+      .addCase(applyBatchFixes.fulfilled, (state, action) => {
+        state.promptLoading = false;
+        const { results } = action.payload;
+
+        // Update fix statuses for successful applications
+        for (const result of results) {
+          if (result.success) {
+            const fix = state.fixes.find(f => f.fixId === result.fixId);
+            if (fix) {
+              fix.status = 'applied';
+            }
+            // Update prompt file version if we have the file key
+            if (result.fileKey && result.newVersion) {
+              const promptFile = state.promptFiles.find(f => f.fileKey === result.fileKey);
+              if (promptFile) {
+                promptFile.version = result.newVersion;
+                promptFile.lastFixId = result.fixId;
+                promptFile.updatedAt = new Date().toISOString();
+              }
+            }
+          }
+        }
+      })
+      .addCase(applyBatchFixes.rejected, (state, action) => {
+        state.promptLoading = false;
+        state.error = action.payload as string;
+      });
+
+    // ========================================================================
+    // DIAGNOSIS REDUCERS
+    // ========================================================================
+
+    // Run Diagnosis
+    builder
+      .addCase(runDiagnosis.pending, (state) => {
+        state.diagnosis.isRunning = true;
+        state.diagnosis.error = null;
+        state.diagnosis.progress = { analyzed: 0, total: 0 };
+      })
+      .addCase(runDiagnosis.fulfilled, (state, action) => {
+        state.diagnosis.isRunning = false;
+        state.diagnosis.lastResult = action.payload;
+        state.diagnosis.progress = {
+          analyzed: action.payload.analyzedCount ?? 0,
+          total: action.payload.totalFailures ?? 0,
+        };
+      })
+      .addCase(runDiagnosis.rejected, (state, action) => {
+        state.diagnosis.isRunning = false;
+        state.diagnosis.error = action.payload as string;
+      });
+
+    // ========================================================================
+    // VERIFICATION REDUCERS
+    // ========================================================================
+
+    // Verify Fixes
+    builder
+      .addCase(verifyFixes.pending, (state) => {
+        state.verification.isRunning = true;
+        state.verification.error = null;
+      })
+      .addCase(verifyFixes.fulfilled, (state, action) => {
+        state.verification.isRunning = false;
+        state.verification.lastResult = action.payload;
+
+        // Update fix statuses based on verification results
+        if (action.payload.overallEffective) {
+          for (const fixId of action.payload.fixIds) {
+            const fix = state.fixes.find(f => f.fixId === fixId);
+            if (fix) {
+              // Check if all tests for this fix passed
+              const fixResults = action.payload.results.filter(r => r.fixId === fixId);
+              const allPassed = fixResults.every(r => r.effective);
+              if (allPassed) {
+                fix.status = 'verified';
+              }
+            }
+          }
+        }
+      })
+      .addCase(verifyFixes.rejected, (state, action) => {
+        state.verification.isRunning = false;
+        state.verification.error = action.payload as string;
+      });
+
+    // ========================================================================
+    // DEPLOYMENT TRACKING REDUCERS (Phase 5: Flowise Sync)
+    // ========================================================================
+
+    // Fetch Deployed Versions
+    builder
+      .addCase(fetchDeployedVersions.pending, (state) => {
+        state.deployment.loading = true;
+        state.deployment.error = null;
+      })
+      .addCase(fetchDeployedVersions.fulfilled, (state, action) => {
+        state.deployment.loading = false;
+        state.deployment.deployedVersions = action.payload;
+      })
+      .addCase(fetchDeployedVersions.rejected, (state, action) => {
+        state.deployment.loading = false;
+        state.deployment.error = action.payload as string;
+      });
+
+    // Mark Prompt Deployed
+    builder
+      .addCase(markPromptDeployed.pending, (state) => {
+        state.deployment.loading = true;
+        state.deployment.error = null;
+      })
+      .addCase(markPromptDeployed.fulfilled, (state, action) => {
+        state.deployment.loading = false;
+        state.deployment.deployedVersions[action.payload.fileKey] = action.payload.version;
+      })
+      .addCase(markPromptDeployed.rejected, (state, action) => {
+        state.deployment.loading = false;
+        state.deployment.error = action.payload as string;
+      });
   },
 });
 
@@ -637,6 +911,19 @@ export const selectPromptFiles = (state: RootState) => state.testMonitor.promptF
 export const selectPromptContent = (state: RootState) => state.testMonitor.promptContent;
 export const selectPromptHistory = (state: RootState) => state.testMonitor.promptHistory;
 export const selectPromptLoading = (state: RootState) => state.testMonitor.promptLoading;
+// Diagnosis selectors
+export const selectDiagnosisState = (state: RootState) => state.testMonitor.diagnosis;
+export const selectDiagnosisRunning = (state: RootState) => state.testMonitor.diagnosis.isRunning;
+export const selectDiagnosisError = (state: RootState) => state.testMonitor.diagnosis.error;
+// Verification selectors
+export const selectVerificationState = (state: RootState) => state.testMonitor.verification;
+export const selectVerificationRunning = (state: RootState) => state.testMonitor.verification.isRunning;
+export const selectVerificationResult = (state: RootState) => state.testMonitor.verification.lastResult;
+export const selectAppliedFixes = (state: RootState) => state.testMonitor.fixes.filter(f => f.status === 'applied');
+// Deployment selectors (Phase 5: Flowise Sync)
+export const selectDeploymentState = (state: RootState) => state.testMonitor.deployment;
+export const selectDeployedVersions = (state: RootState) => state.testMonitor.deployment.deployedVersions;
+export const selectDeploymentLoading = (state: RootState) => state.testMonitor.deployment.loading;
 
 // Export reducer
 export default testMonitorSlice.reducer;

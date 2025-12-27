@@ -208,7 +208,28 @@ async function executeRequest() {
                 const parsed = await callCloud9('SetPatient', apiParams);
                 const createResult = parsed.records[0]?.Result || '';
                 const patientGUID = extractGuidFromResult(createResult, /Patient Added:\s*([A-Fa-f0-9-]+)/i);
-                result = { success: createResult.includes('Added'), patientGUID: patientGUID, message: createResult };
+                const patientCreated = createResult.includes('Added');
+
+                // LLM Guidance: Direct agent to IMMEDIATELY call book_child
+                const llmGuidance = {
+                    current_state: patientCreated ? "EXECUTE_BOOKING" : "PATIENT_CREATE_FAILED",
+                    next_action: patientCreated
+                        ? "call_book_child_immediately"
+                        : "transfer_to_agent",
+                    critical_instruction: patientCreated
+                        ? "Patient created successfully. You MUST now IMMEDIATELY call schedule_appointment_dso with action=book_child using this patientGUID. Do NOT say 'Let me check' or 'One moment'. Do NOT respond to caller until booking is complete."
+                        : "Patient creation failed. Transfer to live agent.",
+                    patientGUID_for_booking: patientGUID,
+                    prohibited_responses: ["Let me check on that", "One moment while I look into this", "I'm verifying", "Let me confirm"],
+                    booking_sequence: "After patient create -> IMMEDIATELY call book_child -> THEN confirm to caller"
+                };
+
+                result = {
+                    success: patientCreated,
+                    patientGUID: patientGUID,
+                    message: createResult,
+                    llm_guidance: llmGuidance
+                };
                 console.log(`[${toolName}] Patient created: ${patientGUID}`);
                 break;
             }

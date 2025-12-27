@@ -129,6 +129,33 @@ export function ApiCallsPanel({ apiCalls, loading }: ApiCallsPanelProps) {
     setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
+  // Build a global patient context map from ALL API calls
+  // This allows us to resolve patient names when only a GUID is present
+  const globalPatientMap = React.useMemo(() => {
+    const map = new Map<string, ExtractedPatient>();
+    for (const call of apiCalls) {
+      const callPatients = extractPatientsFromApiCall(call);
+      // Debug: log extracted patients for patient-related tools
+      if (call.toolName.includes('patient') || call.toolName.includes('schedule')) {
+        console.log(`[PatientDebug] ${call.toolName}:`, {
+          id: call.id,
+          request: call.requestPayload,
+          response: call.responsePayload,
+          extractedPatients: callPatients,
+        });
+      }
+      for (const patient of callPatients) {
+        // Only add/update if this patient has a real name (not "Unknown Patient")
+        const existing = map.get(patient.patientGuid);
+        if (!existing || (patient.fullName !== 'Unknown Patient' && existing.fullName === 'Unknown Patient')) {
+          map.set(patient.patientGuid, patient);
+        }
+      }
+    }
+    console.log('[PatientDebug] Global patient map:', Object.fromEntries(map));
+    return map;
+  }, [apiCalls]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -153,8 +180,24 @@ export function ApiCallsPanel({ apiCalls, loading }: ApiCallsPanelProps) {
           ? 'text-green-600 dark:text-green-400'
           : 'text-red-600 dark:text-red-400';
 
-        // Extract patients from this API call
-        const patients = extractPatientsFromApiCall(call);
+        // Extract patients from this API call, then enrich with global context
+        let patients = extractPatientsFromApiCall(call);
+
+        // For any patient with "Unknown Patient" name, try to find name from global map
+        patients = patients.map(p => {
+          if (p.fullName === 'Unknown Patient') {
+            const globalPatient = globalPatientMap.get(p.patientGuid);
+            if (globalPatient && globalPatient.fullName !== 'Unknown Patient') {
+              return {
+                ...p,
+                fullName: globalPatient.fullName,
+                firstName: globalPatient.firstName,
+                lastName: globalPatient.lastName,
+              };
+            }
+          }
+          return p;
+        });
 
         return (
           <div

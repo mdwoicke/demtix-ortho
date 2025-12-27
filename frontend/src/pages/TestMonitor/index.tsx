@@ -11,6 +11,7 @@ const tabs = [
   { name: 'Dashboard', path: ROUTES.TEST_MONITOR_DASHBOARD, exact: true },
   { name: 'Test Cases', path: ROUTES.TEST_MONITOR_CASES },
   { name: 'Goal Tests', path: ROUTES.TEST_MONITOR_GOAL_CASES },
+  { name: 'Create Test', path: ROUTES.TEST_MONITOR_CREATE },
   { name: 'History', path: ROUTES.TEST_MONITOR_HISTORY },
   { name: 'Tuning', path: ROUTES.TEST_MONITOR_TUNING },
 ];
@@ -68,3 +69,4 @@ export { AgentTuning } from './AgentTuning';
 export { TestCasesPage } from './TestCasesPage';
 export { GoalTestCasesPage } from './GoalTestCasesPage';
 export { GoalTestsDashboard } from './GoalTestsDashboard';
+export { CreateGoalTestPage } from './CreateGoalTestPage';

@@ -46,6 +46,11 @@ export type AgentIntent =
   | 'offering_time_slots'     // Bot is presenting specific time options
   | 'confirming_booking'
 
+  // Post-booking info
+  | 'offering_address'        // Bot asks if caller wants the address
+  | 'providing_address'       // Bot provides office address
+  | 'providing_parking_info'  // Bot provides parking information
+
   // Transfers & errors
   | 'initiating_transfer'
   | 'handling_error'
@@ -74,6 +79,8 @@ export const INTENT_TO_FIELD: Partial<Record<AgentIntent, string>> = {
   'asking_time_preference': 'time_preference',
   'asking_location_preference': 'location_preference',
   'reminding_bring_card': 'card_reminder',
+  'providing_address': 'address_provided',
+  'providing_parking_info': 'parking_info',
 };
 
 /**
@@ -210,10 +217,25 @@ export const INTENT_KEYWORDS: Record<AgentIntent, RegExp[]> = {
     /\bI have booked\b/i,
     /\byour appointment is confirmed\b/i,
     /\bappointment.*set\b/i,
-    // Patterns for when bot uses "is being scheduled" language (should be fixed in Flowise prompt)
-    /\bappointment is being scheduled\b/i,
-    /\blet me get that booked\b/i,
-    /\bI'll confirm as soon as.*booked\b/i,
+    // Note: "Let me get that booked" is NOT a confirmation - it's the bot starting to book
+    // The actual confirmation comes AFTER with "Your appointment has been scheduled"
+  ],
+
+  'offering_address': [
+    /\bwould you like.*(address|directions)\b/i,           // "Would you like the address?"
+    /\bwant me to (give|provide).*(address|directions)\b/i, // "Want me to give you the address?"
+    /\bneed.*(address|directions)\b/i,                      // "Do you need the address?"
+  ],
+  'providing_address': [
+    /\boffice is located at\b/i,                            // "The office is located at..."
+    /\baddress is\b/i,                                      // "The address is..."
+    /\blocated at\b.*\d+\b/i,                               // "located at 123..."
+    /\b\d+\s+\w+\s+(street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr)\b/i, // Street address pattern
+  ],
+  'providing_parking_info': [
+    /\bparking\b.*\b(available|lot|garage|street|behind|front|free)\b/i, // "Parking is available..."
+    /\b(free|ample|plenty of)\s+parking\b/i,                              // "Free parking"
+    /\bpark\b.*\b(building|office|lot)\b/i,                               // "You can park..."
   ],
 
   'initiating_transfer': [/\b(transfer|connect|live agent|specialist|hold)\b/i],
@@ -232,6 +254,11 @@ const INTENT_PRIORITY_ORDER: AgentIntent[] = [
   'confirming_booking',
   'saying_goodbye',
   'initiating_transfer',
+
+  // Post-booking info - check BEFORE booking flow to catch address/parking responses
+  'providing_address',
+  'providing_parking_info',
+  'offering_address',
 
   // Booking flow - check searching BEFORE offering
   'searching_availability',

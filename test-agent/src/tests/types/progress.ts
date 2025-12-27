@@ -81,6 +81,13 @@ export interface ProgressState {
   /** History of recent intents (for detecting repetition) */
   intentHistory: AgentIntent[];
 
+  // Persistent flags (survive flow state changes)
+  /** Whether booking was confirmed at any point (persists after goodbye) */
+  bookingConfirmed: boolean;
+
+  /** Whether transfer was initiated at any point (persists after goodbye) */
+  transferInitiated: boolean;
+
   // Timing
   /** When the conversation started */
   startedAt: Date;
@@ -136,6 +143,8 @@ export function createInitialProgressState(pendingFields: CollectableField[]): P
     turnNumber: 0,
     lastAgentIntent: 'greeting',
     intentHistory: [],
+    bookingConfirmed: false,
+    transferInitiated: false,
     startedAt: new Date(),
     lastActivityAt: new Date(),
     issues: [],

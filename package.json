@@ -12,6 +12,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
+    "dotenv": "^17.2.3",
     "node-fetch": "^2.7.0",
     "playwright": "^1.57.0"
   }

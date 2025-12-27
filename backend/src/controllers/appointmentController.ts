@@ -3,6 +3,7 @@ import { createCloud9Client } from '../services/cloud9/client';
 import { Environment, isValidEnvironment } from '../config/cloud9';
 import { AppError, asyncHandler } from '../middleware/errorHandler';
 import { Cloud9Appointment, Cloud9AvailableSlot } from '../types/cloud9';
+import { AppointmentModel } from '../models/Appointment';
 import logger from '../utils/logger';
 
 /**
@@ -51,33 +52,43 @@ export const getPatientAppointments = asyncHandler(
       );
     }
 
+    // Get local appointment data for scheduled_at timestamps
+    const localAppointments = AppointmentModel.getByPatientGuid(patientGuid);
+    const localAppointmentMap = new Map(
+      localAppointments.map((a) => [a.appointment_guid, a])
+    );
+
     // Transform appointment data
-    const appointments = response.records.map((appt: Cloud9Appointment) => ({
-      appointment_guid: appt.AppointmentGUID,
-      patient_guid: appt.PatientGUID,
-      patient_title: appt.PatientTitle,
-      patient_first_name: appt.PatientFirstName,
-      patient_middle_name: appt.PatientMiddleName,
-      patient_last_name: appt.PatientLastName,
-      patient_suffix: appt.PatientSuffix,
-      patient_greeting: appt.PatientGreeting,
-      patient_gender: appt.PatientGender,
-      appointment_date_time: appt.AppointmentDateTime,
-      appointment_type_guid: appt.AppointmentTypeGUID,
-      appointment_type_description: appt.AppointmentTypeDescription,
-      status: appt.AppointmentStatus,
-      status_description: appt.AppointmentStatusDescription,
-      appointment_note: appt.AppointmentNote,
-      appointment_minutes: appt.AppointmentMinutes,
-      appointment_confirmation: appt.AppointmentConfirmation,
-      orthodontist_guid: appt.OrthodontistGUID,
-      orthodontist_code: appt.OrthodontistCode,
-      orthodontist_name: appt.OrthodontistName,
-      location_guid: appt.LocationGUID,
-      location_code: appt.LocationCode,
-      location_name: appt.LocationName,
-      environment,
-    }));
+    const appointments = response.records.map((appt: Cloud9Appointment) => {
+      const localAppt = localAppointmentMap.get(appt.AppointmentGUID);
+      return {
+        appointment_guid: appt.AppointmentGUID,
+        patient_guid: appt.PatientGUID,
+        patient_title: appt.PatientTitle,
+        patient_first_name: appt.PatientFirstName,
+        patient_middle_name: appt.PatientMiddleName,
+        patient_last_name: appt.PatientLastName,
+        patient_suffix: appt.PatientSuffix,
+        patient_greeting: appt.PatientGreeting,
+        patient_gender: appt.PatientGender,
+        appointment_date_time: appt.AppointmentDateTime,
+        appointment_type_guid: appt.AppointmentTypeGUID,
+        appointment_type_description: appt.AppointmentTypeDescription,
+        status: appt.AppointmentStatus,
+        status_description: appt.AppointmentStatusDescription,
+        appointment_note: appt.AppointmentNote,
+        appointment_minutes: appt.AppointmentMinutes,
+        appointment_confirmation: appt.AppointmentConfirmation,
+        orthodontist_guid: appt.OrthodontistGUID,
+        orthodontist_code: appt.OrthodontistCode,
+        orthodontist_name: appt.OrthodontistName,
+        location_guid: appt.LocationGUID,
+        location_code: appt.LocationCode,
+        location_name: appt.LocationName,
+        environment,
+        scheduled_at: localAppt?.cached_at || null,
+      };
+    });
 
     res.json({
       status: 'success',
@@ -162,6 +173,7 @@ export const createAppointment = asyncHandler(async (req: Request, res: Response
 
   // Fetch the created appointment to get its GUID
   const appointmentsResponse = await client.getPatientAppointments(patientGuid);
+  const scheduledAt = new Date().toISOString();
 
   if (appointmentsResponse.records.length > 0) {
     // Find the most recent appointment (should be the one we just created)
@@ -195,10 +207,39 @@ export const createAppointment = asyncHandler(async (req: Request, res: Response
     // Return the most recent one (likely the newly created appointment)
     const newAppointment = appointments[0];
 
+    // Save to local database to track scheduled_at timestamp
+    try {
+      AppointmentModel.upsert({
+        appointment_guid: newAppointment.appointment_guid,
+        patient_guid: newAppointment.patient_guid,
+        appointment_date_time: newAppointment.appointment_date_time,
+        appointment_type_guid: newAppointment.appointment_type_guid,
+        appointment_type_description: newAppointment.appointment_type_description,
+        location_guid: newAppointment.location_guid,
+        location_name: newAppointment.location_name,
+        orthodontist_name: newAppointment.orthodontist_name,
+        schedule_view_guid: scheduleViewGuid,
+        schedule_column_guid: scheduleColumnGuid,
+        minutes: newAppointment.appointment_minutes,
+        status: newAppointment.status_description || 'Scheduled',
+        environment,
+      });
+      logger.info('Appointment saved to local database', {
+        appointmentGuid: newAppointment.appointment_guid,
+      });
+    } catch (dbError) {
+      logger.warn('Failed to save appointment to local database', {
+        error: dbError instanceof Error ? dbError.message : String(dbError),
+      });
+    }
+
     res.status(201).json({
       status: 'success',
       message: 'Appointment created successfully',
-      data: newAppointment,
+      data: {
+        ...newAppointment,
+        scheduled_at: scheduledAt,
+      },
       environment,
     });
   } else {

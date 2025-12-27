@@ -16,9 +16,11 @@ import type {
   DynamicChildDataDTO,
   DynamicDataInventoryDTO,
   DynamicUserPersonaDTO,
+  TristateValue,
 } from '../../../types/testMonitor.types';
 import { isDynamicFieldDTO, DEFAULT_FIELD_CONSTRAINTS } from '../../../types/testMonitor.types';
 import DynamicFieldToggle from './DynamicFieldToggle';
+import TristateToggle from './TristateToggle';
 
 // Support both static and dynamic personas
 type PersonaType = UserPersonaDTO | DynamicUserPersonaDTO;
@@ -26,6 +28,7 @@ type PersonaType = UserPersonaDTO | DynamicUserPersonaDTO;
 interface PersonaEditorProps {
   persona: PersonaType;
   onChange: (persona: PersonaType) => void;
+  readOnly?: boolean;
 }
 
 const DEFAULT_CHILD: ChildDataDTO = {
@@ -44,7 +47,7 @@ function getFixedValue<T>(value: T | DynamicFieldSpecDTO | undefined, defaultVal
   return value as T;
 }
 
-export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
+export function PersonaEditor({ persona, onChange, readOnly = false }: PersonaEditorProps) {
   const [expandedChild, setExpandedChild] = useState<number | null>(0);
 
   // Cast inventory to dynamic type for flexibility
@@ -52,7 +55,7 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
 
   const updateInventory = (
     field: string,
-    value: string | boolean | DynamicFieldSpecDTO | DynamicChildDataDTO[]
+    value: string | boolean | TristateValue | DynamicFieldSpecDTO | DynamicChildDataDTO[]
   ) => {
     onChange({
       ...persona,
@@ -76,7 +79,7 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
     } as PersonaType);
   };
 
-  const updateChild = (index: number, field: string, value: string | boolean | DynamicFieldSpecDTO) => {
+  const updateChild = (index: number, field: string, value: string | boolean | TristateValue | DynamicFieldSpecDTO) => {
     const newChildren = [...inventory.children] as DynamicChildDataDTO[];
     newChildren[index] = { ...newChildren[index], [field]: value };
     updateInventory('children', newChildren);
@@ -119,7 +122,8 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
               value={persona.name}
               onChange={(e) => onChange({ ...persona, name: e.target.value })}
               placeholder="e.g., Sarah Johnson"
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-primary-500 focus:border-primary-500"
+              disabled={readOnly}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-primary-500 focus:border-primary-500 disabled:opacity-60 disabled:cursor-not-allowed"
             />
           </div>
           <div>
@@ -131,7 +135,8 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
               value={persona.description || ''}
               onChange={(e) => onChange({ ...persona, description: e.target.value })}
               placeholder="Brief description of this persona"
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-primary-500 focus:border-primary-500"
+              disabled={readOnly}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-primary-500 focus:border-primary-500 disabled:opacity-60 disabled:cursor-not-allowed"
             />
           </div>
         </div>
@@ -155,6 +160,7 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
             required
             placeholder="Sarah"
             showConstraints={false}
+            disabled={readOnly}
           />
           <DynamicFieldToggle
             label="Last Name"
@@ -164,6 +170,7 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
             required
             placeholder="Johnson"
             showConstraints={false}
+            disabled={readOnly}
           />
           <DynamicFieldToggle
             label="Phone Number"
@@ -174,6 +181,7 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
             inputType="tel"
             placeholder="2155551234"
             showConstraints={false}
+            disabled={readOnly}
           />
           <DynamicFieldToggle
             label="Email"
@@ -183,6 +191,7 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
             inputType="email"
             placeholder="sarah@email.com"
             showConstraints={false}
+            disabled={readOnly}
           />
         </div>
       </div>
@@ -196,12 +205,14 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
             </svg>
             Children ({persona.inventory.children.length})
           </h4>
-          <button
-            onClick={addChild}
-            className="px-2 py-1 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded transition-colors"
-          >
-            + Add Child
-          </button>
+          {!readOnly && (
+            <button
+              onClick={addChild}
+              className="px-2 py-1 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded transition-colors"
+            >
+              + Add Child
+            </button>
+          )}
         </div>
 
         {persona.inventory.children.map((child, index) => (
@@ -215,18 +226,20 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
               onClick={() => setExpandedChild(expandedChild === index ? null : index)}
             >
               <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                Child {index + 1}: {child.firstName || 'Unnamed'} {child.lastName}
+                Child {index + 1}: {getFixedValue((child as DynamicChildDataDTO).firstName, '') || 'Unnamed'} {getFixedValue((child as DynamicChildDataDTO).lastName, '')}
               </span>
               <div className="flex items-center gap-2">
-                <button
-                  onClick={(e) => { e.stopPropagation(); removeChild(index); }}
-                  className="p-1 text-red-500 hover:text-red-700"
-                  title="Remove child"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
+                {!readOnly && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); removeChild(index); }}
+                    className="p-1 text-red-500 hover:text-red-700"
+                    title="Remove child"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                )}
                 <svg
                   className={`w-4 h-4 transition-transform ${expandedChild === index ? 'rotate-180' : ''}`}
                   fill="none"
@@ -250,6 +263,7 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
                     required
                     placeholder="Emma"
                     showConstraints={false}
+                    disabled={readOnly}
                   />
                   <DynamicFieldToggle
                     label="Last Name"
@@ -259,6 +273,7 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
                     required
                     placeholder="Johnson"
                     showConstraints={false}
+                    disabled={readOnly}
                   />
                   <DynamicFieldToggle
                     label="Date of Birth"
@@ -269,6 +284,7 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
                     inputType="date"
                     showConstraints={true}
                     defaultConstraints={DEFAULT_FIELD_CONSTRAINTS.dateOfBirth}
+                    disabled={readOnly}
                   />
                   <DynamicFieldToggle
                     label="Special Needs"
@@ -277,33 +293,30 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
                     onChange={(value) => updateChild(index, 'specialNeeds', value)}
                     placeholder="None"
                     showConstraints={true}
+                    disabled={readOnly}
                   />
                 </div>
-                <div className="flex gap-4">
-                  <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-                    <input
-                      type="checkbox"
-                      checked={getFixedValue(
-                        (inventory.children[index] as DynamicChildDataDTO)?.isNewPatient,
-                        true
-                      )}
-                      onChange={(e) => updateChild(index, 'isNewPatient', e.target.checked)}
-                      className="rounded"
-                    />
-                    New Patient
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-                    <input
-                      type="checkbox"
-                      checked={getFixedValue(
-                        (inventory.children[index] as DynamicChildDataDTO)?.hadBracesBefore,
-                        false
-                      )}
-                      onChange={(e) => updateChild(index, 'hadBracesBefore', e.target.checked)}
-                      className="rounded"
-                    />
-                    Had Braces Before
-                  </label>
+                <div className="flex flex-wrap gap-4 pt-2 border-t border-gray-200 dark:border-gray-700">
+                  <TristateToggle
+                    label="New Patient"
+                    value={getFixedValue(
+                      (inventory.children[index] as DynamicChildDataDTO)?.isNewPatient,
+                      true
+                    ) as TristateValue}
+                    onChange={(value) => updateChild(index, 'isNewPatient', value)}
+                    disabled={readOnly}
+                    compact
+                  />
+                  <TristateToggle
+                    label="Had Braces Before"
+                    value={getFixedValue(
+                      (inventory.children[index] as DynamicChildDataDTO)?.hadBracesBefore,
+                      false
+                    ) as TristateValue}
+                    onChange={(value) => updateChild(index, 'hadBracesBefore', value)}
+                    disabled={readOnly}
+                    compact
+                  />
                 </div>
               </div>
             )}
@@ -326,30 +339,16 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
           Insurance & Preferences
         </h4>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 mb-2">
-              <input
-                type="checkbox"
-                checked={getFixedValue(inventory.hasInsurance, true)}
-                onChange={(e) => updateInventory('hasInsurance', e.target.checked)}
-                className="rounded"
-              />
-              Has Insurance
-            </label>
-            {getFixedValue(inventory.hasInsurance, true) && (
-              <DynamicFieldToggle
-                label="Insurance Provider"
-                fieldType="insuranceProvider"
-                value={inventory.insuranceProvider || ''}
-                onChange={(value) => updateInventory('insuranceProvider', value)}
-                placeholder="Keystone First"
-                showConstraints={true}
-                defaultConstraints={DEFAULT_FIELD_CONSTRAINTS.insuranceProvider}
-              />
-            )}
-          </div>
-          <div>
+        <div className="space-y-4">
+          {/* Row 1: Insurance & Location */}
+          <div className="grid grid-cols-2 gap-4 items-start">
+            <TristateToggle
+              label="Has Insurance"
+              value={getFixedValue(inventory.hasInsurance, true) as TristateValue}
+              onChange={(value) => updateInventory('hasInsurance', value)}
+              disabled={readOnly}
+              compact
+            />
             <DynamicFieldToggle
               label="Preferred Location"
               fieldType="location"
@@ -363,41 +362,59 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
               ]}
               showConstraints={true}
               defaultConstraints={DEFAULT_FIELD_CONSTRAINTS.location}
+              disabled={readOnly}
             />
           </div>
-          <div>
-            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
-              Preferred Time
-            </label>
-            <select
-              value={getFixedValue(inventory.preferredTimeOfDay, 'any')}
-              onChange={(e) => updateInventory('preferredTimeOfDay', e.target.value as string)}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
-            >
-              <option value="any">Any time</option>
-              <option value="morning">Morning</option>
-              <option value="afternoon">Afternoon</option>
-            </select>
+
+          {/* Row 2: Insurance Provider & Preferred Time */}
+          <div className="grid grid-cols-2 gap-4 items-start">
+            {getFixedValue(inventory.hasInsurance, true) === true ? (
+              <DynamicFieldToggle
+                label="Insurance Provider"
+                fieldType="insuranceProvider"
+                value={inventory.insuranceProvider || ''}
+                onChange={(value) => updateInventory('insuranceProvider', value)}
+                placeholder="Keystone First"
+                showConstraints={true}
+                defaultConstraints={DEFAULT_FIELD_CONSTRAINTS.insuranceProvider}
+                disabled={readOnly}
+              />
+            ) : (
+              <div />
+            )}
+            <div>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                Preferred Time
+              </label>
+              <select
+                value={getFixedValue(inventory.preferredTimeOfDay, 'any')}
+                onChange={(e) => updateInventory('preferredTimeOfDay', e.target.value as string)}
+                disabled={readOnly}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <option value="any">Any time</option>
+                <option value="morning">Morning</option>
+                <option value="afternoon">Afternoon</option>
+              </select>
+            </div>
           </div>
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-              <input
-                type="checkbox"
-                checked={getFixedValue(inventory.previousVisitToOffice, false)}
-                onChange={(e) => updateInventory('previousVisitToOffice', e.target.checked)}
-                className="rounded"
-              />
-              Previous Visit to Office
-            </label>
-            <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-              <input
-                type="checkbox"
-                checked={getFixedValue(inventory.previousOrthoTreatment, false)}
-                onChange={(e) => updateInventory('previousOrthoTreatment', e.target.checked)}
-                className="rounded"
-              />
-              Previous Ortho Treatment
-            </label>
+
+          {/* Row 3: Previous Visit & Previous Treatment */}
+          <div className="grid grid-cols-2 gap-4 items-start">
+            <TristateToggle
+              label="Previous Visit to Office"
+              value={getFixedValue(inventory.previousVisitToOffice, false) as TristateValue}
+              onChange={(value) => updateInventory('previousVisitToOffice', value)}
+              disabled={readOnly}
+              compact
+            />
+            <TristateToggle
+              label="Previous Ortho Treatment"
+              value={getFixedValue(inventory.previousOrthoTreatment, false) as TristateValue}
+              onChange={(value) => updateInventory('previousOrthoTreatment', value)}
+              disabled={readOnly}
+              compact
+            />
           </div>
         </div>
       </div>
@@ -419,7 +436,8 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
             <select
               value={persona.traits.verbosity}
               onChange={(e) => updateTraits('verbosity', e.target.value as any)}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+              disabled={readOnly}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <option value="terse">Terse (brief answers)</option>
               <option value="normal">Normal</option>
@@ -433,7 +451,8 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
             <select
               value={persona.traits.patienceLevel || 'patient'}
               onChange={(e) => updateTraits('patienceLevel', e.target.value as any)}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+              disabled={readOnly}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <option value="patient">Patient</option>
               <option value="moderate">Moderate</option>
@@ -442,15 +461,13 @@ export function PersonaEditor({ persona, onChange }: PersonaEditorProps) {
           </div>
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-          <input
-            type="checkbox"
-            checked={persona.traits.providesExtraInfo}
-            onChange={(e) => updateTraits('providesExtraInfo', e.target.checked)}
-            className="rounded"
-          />
-          Provides extra unrequested information
-        </label>
+        <TristateToggle
+          label="Provides extra unrequested information"
+          value={persona.traits.providesExtraInfo}
+          onChange={(value) => updateTraits('providesExtraInfo', value)}
+          disabled={readOnly}
+          compact
+        />
       </div>
     </div>
   );

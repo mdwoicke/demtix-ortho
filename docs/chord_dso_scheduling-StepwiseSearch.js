@@ -28,10 +28,10 @@ const CLOUD9 = {
     password: '#!InteleP33rTest!#',
     namespace: 'http://schemas.practica.ws/cloud9/partners/',
     vendorUserName: 'IntelepeerTest',
-    defaultApptTypeGUID: '8fc9d063-ae46-4975-a5ae-734c6efe341a',
-    // Default schedule view/column from sandbox data - used when LLM fails to extract from slots
-    defaultScheduleViewGUID: '2544683a-8e79-4b32-a4d4-bf851996bac3',
-    defaultScheduleColumnGUID: 'e062b81f-1fff-40fc-b4a4-1cf9ecc2f32b'
+    // ONLY hardcoded value - required for SetAppointment but not returned in slot data
+    defaultApptTypeGUID: '8fc9d063-ae46-4975-a5ae-734c6efe341a'
+    // NOTE: scheduleViewGUID and scheduleColumnGUID MUST come from live slot data
+    // If missing, caller should be transferred to a live agent
 };
 
 // ============================================================================
@@ -482,6 +482,20 @@ async function executeRequest() {
                     if (dateValidation.wasDateCorrected) {
                         message = `${dateValidation.correctionMessage} ${message}`;
                     }
+
+                    // LLM Guidance: Help agent understand next action
+                    const llmGuidance = {
+                        current_state: "OFFER_SLOTS",
+                        next_action: searchResult.records.length > 0
+                            ? "offer_time_to_caller"
+                            : (searchResult.attempts < 3 ? "expand_date_range" : "transfer_to_agent"),
+                        instructions: searchResult.records.length > 0
+                            ? "Present the first available slot to caller with day name and time. Wait for confirmation. On YES, immediately call book_child."
+                            : "No slots found. Say 'Let me check a few more dates' and retry with expanded endDate.",
+                        on_user_confirms: "IMMEDIATELY call chord_dso_patient action=create, then schedule_appointment_dso action=book_child. Do NOT say 'Let me check'.",
+                        prohibited_responses: ["Let me check on that", "One moment while I look into this"]
+                    };
+
                     return JSON.stringify({
                         slots: searchResult.records,
                         count: searchResult.records.length,
@@ -490,7 +504,8 @@ async function executeRequest() {
                         expanded: searchResult.expanded,
                         currentDate: dateValidation.currentDate,
                         dateWasCorrected: dateValidation.wasDateCorrected,
-                        message: message
+                        message: message,
+                        llm_guidance: llmGuidance
                     });
                 } else {
                     // grouped_slots
@@ -505,6 +520,20 @@ async function executeRequest() {
                     if (dateValidation.wasDateCorrected) {
                         message = `${dateValidation.correctionMessage} ${message}`;
                     }
+
+                    // LLM Guidance for grouped slots
+                    const llmGuidance = {
+                        current_state: "OFFER_SLOTS",
+                        next_action: groups.length > 0
+                            ? "offer_grouped_times_to_caller"
+                            : (searchResult.attempts < 3 ? "expand_date_range" : "transfer_to_agent"),
+                        instructions: groups.length > 0
+                            ? "Present consecutive slots for all children. State each child's time individually."
+                            : "No grouped slots found. Say 'Let me check a few more dates' and retry.",
+                        on_user_confirms: "IMMEDIATELY call chord_dso_patient action=create for EACH child, then book_child for EACH. Do NOT say 'Let me check'.",
+                        prohibited_responses: ["Let me check on that", "One moment while I look into this"]
+                    };
+
                     return JSON.stringify({
                         groups: groups,
                         count: groups.length,
@@ -514,7 +543,8 @@ async function executeRequest() {
                         expanded: searchResult.expanded,
                         currentDate: dateValidation.currentDate,
                         dateWasCorrected: dateValidation.wasDateCorrected,
-                        message: message
+                        message: message,
+                        llm_guidance: llmGuidance
                     });
                 }
             }
@@ -523,26 +553,44 @@ async function executeRequest() {
                 if (!params.patientGUID) throw new Error('patientGUID required');
                 if (!params.startTime) throw new Error('startTime required (MM/DD/YYYY HH:MM AM)');
 
-                // Use defaults for scheduling GUIDs if not provided or empty
-                // This handles cases where LLM fails to extract from slots response
-                const scheduleViewGUID = params.scheduleViewGUID || CLOUD9.defaultScheduleViewGUID;
-                const scheduleColumnGUID = params.scheduleColumnGUID || CLOUD9.defaultScheduleColumnGUID;
+                // CRITICAL: scheduleViewGUID and scheduleColumnGUID MUST come from live slot data
+                // These values are returned by GetOnlineReservations and must be extracted by LLM
+                // If missing, we cannot proceed - transfer caller to live agent
+                if (!params.scheduleViewGUID || !params.scheduleColumnGUID) {
+                    console.log(`[${toolName}] MISSING REQUIRED DATA from slots response`);
+                    console.log(`  scheduleViewGUID: ${params.scheduleViewGUID || 'MISSING'}`);
+                    console.log(`  scheduleColumnGUID: ${params.scheduleColumnGUID || 'MISSING'}`);
 
-                // IMPORTANT: Validate appointmentTypeGUID
-                // Common LLM error: using scheduleViewGUID as appointmentTypeGUID (they look similar)
-                // If appointmentTypeGUID matches scheduleViewGUID, use the default instead
-                let appointmentTypeGUID = params.appointmentTypeGUID;
-                if (!appointmentTypeGUID ||
-                    appointmentTypeGUID === scheduleViewGUID ||
-                    appointmentTypeGUID === params.scheduleViewGUID) {
-                    console.log(`[${toolName}] WARNING: appointmentTypeGUID invalid or same as scheduleViewGUID, using default`);
-                    appointmentTypeGUID = CLOUD9.defaultApptTypeGUID;
+                    return JSON.stringify({
+                        success: false,
+                        transfer_to_agent: true,
+                        reason: 'missing_slot_data',
+                        message: 'Unable to complete booking - required scheduling data is missing from slot response.',
+                        llm_guidance: {
+                            current_state: "TRANSFER_TO_AGENT",
+                            next_action: "transfer_caller_to_live_agent",
+                            required_response: "I apologize, but I'm having trouble completing your booking. Let me transfer you to one of our team members who can help you right away.",
+                            transfer_reason: "Missing scheduleViewGUID or scheduleColumnGUID from slot data"
+                        }
+                    });
                 }
 
-                console.log(`[${toolName}] book_child with defaults:`);
-                console.log(`  scheduleViewGUID: ${scheduleViewGUID} ${params.scheduleViewGUID ? '' : '(DEFAULT)'}`);
-                console.log(`  scheduleColumnGUID: ${scheduleColumnGUID} ${params.scheduleColumnGUID ? '' : '(DEFAULT)'}`);
-                console.log(`  appointmentTypeGUID: ${appointmentTypeGUID} ${params.appointmentTypeGUID ? '' : '(DEFAULT)'}`);
+                const scheduleViewGUID = params.scheduleViewGUID;
+                const scheduleColumnGUID = params.scheduleColumnGUID;
+
+                // AppointmentTypeGUID is the ONLY hardcoded value
+                // SetAppointment requires it but GetOnlineReservations returns empty
+                const appointmentTypeGUID = CLOUD9.defaultApptTypeGUID;
+
+                if (params.appointmentTypeGUID && params.appointmentTypeGUID !== CLOUD9.defaultApptTypeGUID) {
+                    console.log(`[${toolName}] WARNING: Ignoring LLM-provided appointmentTypeGUID "${params.appointmentTypeGUID}"`);
+                    console.log(`[${toolName}] Using defaultApptTypeGUID: ${appointmentTypeGUID}`);
+                }
+
+                console.log(`[${toolName}] book_child with parameters:`);
+                console.log(`  scheduleViewGUID: ${scheduleViewGUID} (from live slot data)`);
+                console.log(`  scheduleColumnGUID: ${scheduleColumnGUID} (from live slot data)`);
+                console.log(`  appointmentTypeGUID: ${appointmentTypeGUID} (hardcoded - only exception)`);
 
                 const apiParams = {
                     PatientGUID: params.patientGUID,
@@ -558,11 +606,26 @@ async function executeRequest() {
                 const parsed = await callCloud9WithRetry('SetAppointment', apiParams);
                 const apptResult = parsed.records[0]?.Result || '';
                 const apptGUID = extractGuidFromResult(apptResult, /Appointment GUID Added:\s*([A-Fa-f0-9-]+)/i);
+                const bookingSuccess = apptResult.includes('Added');
+
+                // LLM Guidance: Direct agent to CONFIRM_BOOKING state
+                const llmGuidance = {
+                    current_state: bookingSuccess ? "CONFIRM_BOOKING" : "BOOKING_FAILED",
+                    next_action: bookingSuccess
+                        ? "confirm_booking_to_caller"
+                        : "retry_or_offer_alternative",
+                    required_response: bookingSuccess
+                        ? "IMMEDIATELY confirm: 'Your appointment has been scheduled for [date] at [time].' MUST include 'scheduled' or 'booked' or 'confirmed' keyword."
+                        : "Apologize briefly, offer to try another time slot. Do NOT say 'Let me check'.",
+                    prohibited_responses: ["Let me check on that", "One moment while I look into this", "I'm verifying"],
+                    booking_confirmed: bookingSuccess
+                };
 
                 return JSON.stringify({
-                    success: apptResult.includes('Added'),
+                    success: bookingSuccess,
                     appointmentGUID: apptGUID,
-                    message: apptResult
+                    message: apptResult,
+                    llm_guidance: llmGuidance
                 });
             }
 
@@ -584,6 +647,31 @@ async function executeRequest() {
 
     } catch (error) {
         console.error(`[${toolName}] Error:`, error.message);
+
+        // Check if this is a network/API failure that requires transfer to live agent
+        const isNetworkError = isRetryableError(error) ||
+            error.message.includes('timeout') ||
+            error.message.includes('ETIMEDOUT') ||
+            error.message.includes('ECONNRESET') ||
+            error.message.includes('ENOTFOUND');
+
+        if (isNetworkError) {
+            return JSON.stringify({
+                error: `Failed to execute ${action}`,
+                message: error.message,
+                transfer_to_agent: true,
+                reason: 'api_failure',
+                llm_guidance: {
+                    current_state: "TRANSFER_TO_AGENT",
+                    next_action: "transfer_caller_to_live_agent",
+                    required_response: "I apologize, but I'm experiencing technical difficulties connecting to our scheduling system. Let me transfer you to one of our team members who can help you right away.",
+                    transfer_reason: `API connection failed: ${error.message}`
+                },
+                action: action,
+                timestamp: new Date().toISOString()
+            });
+        }
+
         return JSON.stringify({
             error: `Failed to execute ${action}`,
             message: error.message,

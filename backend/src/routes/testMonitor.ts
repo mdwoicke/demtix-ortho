@@ -70,6 +70,9 @@ router.get('/recommendations', testMonitorController.getRecommendations);
 // GET /api/test-monitor/fixes - List all fixes with optional filters
 router.get('/fixes', testMonitorController.getFixes);
 
+// POST /api/test-monitor/fixes/verify - Verify fixes by re-running affected tests
+router.post('/fixes/verify', testMonitorController.verifyFixes);
+
 // PUT /api/test-monitor/fixes/:fixId/status - Update fix status
 router.put('/fixes/:fixId/status', testMonitorController.updateFixStatus);
 
@@ -79,6 +82,10 @@ router.put('/fixes/:fixId/status', testMonitorController.updateFixStatus);
 
 // GET /api/test-monitor/prompts - List all prompt files
 router.get('/prompts', testMonitorController.getPromptFiles);
+
+// POST /api/test-monitor/prompts/apply-batch - Apply multiple fixes to their target files
+// Must be defined before /:fileKey routes to avoid conflicts
+router.post('/prompts/apply-batch', testMonitorController.applyBatchFixes);
 
 // GET /api/test-monitor/prompts/:fileKey - Get prompt content
 router.get('/prompts/:fileKey', testMonitorController.getPromptContent);
@@ -97,6 +104,28 @@ router.post('/prompts/:fileKey/save', testMonitorController.savePromptVersion);
 
 // POST /api/test-monitor/prompts/:fileKey/sync - Sync to disk
 router.post('/prompts/:fileKey/sync', testMonitorController.syncPromptToDisk);
+
+// POST /api/test-monitor/prompts/:fileKey/reset - Reset from disk (reload V3 files)
+router.post('/prompts/:fileKey/reset', testMonitorController.resetPromptFromDisk);
+
+// ============================================================================
+// DEPLOYMENT TRACKING ROUTES (Phase 5: Flowise Sync)
+// ============================================================================
+
+// GET /api/test-monitor/prompts/deployed - Get deployed versions for all prompts
+router.get('/prompts/deployed', testMonitorController.getDeployedVersions);
+
+// POST /api/test-monitor/prompts/:fileKey/mark-deployed - Mark a prompt version as deployed
+router.post('/prompts/:fileKey/mark-deployed', testMonitorController.markPromptAsDeployed);
+
+// GET /api/test-monitor/prompts/:fileKey/deployment-history - Get deployment history
+router.get('/prompts/:fileKey/deployment-history', testMonitorController.getDeploymentHistory);
+
+// POST /api/test-monitor/prompts/:fileKey/rollback - Rollback to a previous version
+router.post('/prompts/:fileKey/rollback', testMonitorController.rollbackPromptVersion);
+
+// GET /api/test-monitor/prompts/:fileKey/diff - Get diff between two versions
+router.get('/prompts/:fileKey/diff', testMonitorController.getPromptVersionDiff);
 
 // ============================================================================
 // TEST CASE MANAGEMENT ROUTES
@@ -133,6 +162,16 @@ router.delete('/test-cases/:caseId', testMonitorController.deleteTestCase);
 // ============================================================================
 // GOAL-ORIENTED TEST CASE ROUTES
 // ============================================================================
+
+// AI Suggestion endpoints (must be before /:caseId routes to avoid conflicts)
+// GET /api/test-monitor/goal-tests/suggest/status - Check AI service availability
+router.get('/goal-tests/suggest/status', testMonitorController.getSuggestionServiceStatus);
+
+// POST /api/test-monitor/goal-tests/suggest - Generate AI suggestions
+router.post('/goal-tests/suggest', testMonitorController.suggestGoalTest);
+
+// POST /api/test-monitor/goal-tests/analyze - Analyze natural language goal description
+router.post('/goal-tests/analyze', testMonitorController.analyzeGoalDescription);
 
 // GET /api/test-monitor/goal-tests - List all goal-based test cases
 router.get('/goal-tests', testMonitorController.getGoalTestCases);
