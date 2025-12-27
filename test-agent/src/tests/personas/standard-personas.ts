@@ -62,11 +62,8 @@ export const SARAH_JOHNSON: UserPersona = {
     previousVisitToOffice: false,
     previousOrthoTreatment: false,
     preferredLocation: 'Alleghany',
-    preferredTimeOfDay: 'any',
-    preferredDateRange: {
-      start: '2026-01-01',
-      end: '2026-01-15',
-    },
+    // Simpler time preference - let bot calculate dates
+    preferredTimeOfDay: 'morning',
   },
   traits: NORMAL_TRAITS,
 };
@@ -104,11 +101,8 @@ export const MICHAEL_DAVIS: UserPersona = {
     previousVisitToOffice: false,
     previousOrthoTreatment: false,
     preferredLocation: 'Alleghany',
-    preferredTimeOfDay: 'any',
-    preferredDateRange: {
-      start: '2026-01-01',
-      end: '2026-01-15',
-    },
+    // Simpler time preference - let bot calculate dates
+    preferredTimeOfDay: 'afternoon',
   },
   traits: NORMAL_TRAITS,
 };
@@ -139,11 +133,8 @@ export const JANE_SMITH: UserPersona = {
     previousVisitToOffice: false,
     previousOrthoTreatment: false,
     preferredLocation: 'Alleghany',
-    preferredTimeOfDay: 'any',
-    preferredDateRange: {
-      start: '2026-01-01',
-      end: '2026-01-15',
-    },
+    // Simpler time preference - let bot calculate dates
+    preferredTimeOfDay: 'morning',
   },
   traits: VERBOSE_TRAITS,
 };
@@ -173,11 +164,8 @@ export const ROBERT_CHEN: UserPersona = {
     previousVisitToOffice: true,
     previousOrthoTreatment: true,
     preferredLocation: 'Philadelphia',
+    // Simpler time preference - let bot calculate dates
     preferredTimeOfDay: 'morning',
-    preferredDateRange: {
-      start: '2026-01-01',
-      end: '2026-01-31',
-    },
   },
   traits: NORMAL_TRAITS,
 };
@@ -206,11 +194,8 @@ export const MARIA_GARCIA: UserPersona = {
     previousVisitToOffice: false,
     previousOrthoTreatment: false,
     preferredLocation: 'Alleghany',
+    // Simpler time preference - let bot calculate dates
     preferredTimeOfDay: 'afternoon',
-    preferredDateRange: {
-      start: '2026-01-01',
-      end: '2026-02-28',
-    },
   },
   traits: NORMAL_TRAITS,
 };
@@ -241,11 +226,8 @@ export const DAVID_WILSON: UserPersona = {
     previousVisitToOffice: false,
     previousOrthoTreatment: false,
     preferredLocation: 'Alleghany',
+    // Simpler time preference - let bot calculate dates
     preferredTimeOfDay: 'morning',
-    preferredDateRange: {
-      start: '2026-01-01',
-      end: '2026-01-31',
-    },
   },
   traits: NORMAL_TRAITS,
 };
@@ -275,11 +257,8 @@ export const TERSE_TOM: UserPersona = {
     previousVisitToOffice: false,
     previousOrthoTreatment: false,
     preferredLocation: 'Philadelphia',
-    preferredTimeOfDay: 'any',
-    preferredDateRange: {
-      start: '2026-01-01',
-      end: '2026-01-31',
-    },
+    // Simpler time preference - let bot calculate dates
+    preferredTimeOfDay: 'afternoon',
   },
   traits: TERSE_TRAITS,
 };
