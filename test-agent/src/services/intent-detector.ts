@@ -5,7 +5,7 @@
  * Falls back to keyword-based detection when LLM is unavailable.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+import { getLLMProvider, LLMProvider } from '../../../shared/services/llm-provider';
 import { config } from '../config/config';
 import {
   AgentIntent,
@@ -63,32 +63,22 @@ interface CacheEntry {
  * Analyzes agent responses to determine what information they're asking for.
  */
 export class IntentDetector {
-  private client: Anthropic | null = null;
-  private config: IntentDetectorConfig;
+  private llmProvider: LLMProvider;
+  private detectorConfig: IntentDetectorConfig;
   private cache: Map<string, CacheEntry> = new Map();
 
   constructor(cfg?: Partial<IntentDetectorConfig>) {
-    this.config = { ...DEFAULT_CONFIG, ...cfg };
-    this.initializeClient();
-  }
-
-  private initializeClient(): void {
-    const token = process.env.CLAUDE_CODE_OAUTH_TOKEN ||
-                  process.env.ANTHROPIC_API_KEY;
-
-    if (token && this.config.useLlm) {
-      this.client = new Anthropic({ apiKey: token });
-      console.log('[IntentDetector] Initialized with LLM support');
-    } else {
-      console.log('[IntentDetector] Running in keyword-only mode');
-    }
+    this.detectorConfig = { ...DEFAULT_CONFIG, ...cfg };
+    this.llmProvider = getLLMProvider();
+    console.log('[IntentDetector] Initialized with LLMProvider');
   }
 
   /**
    * Check if LLM-based detection is available
    */
-  isLlmAvailable(): boolean {
-    return this.client !== null;
+  async isLlmAvailable(): Promise<boolean> {
+    const status = await this.llmProvider.checkAvailability();
+    return status.available && this.detectorConfig.useLlm;
   }
 
   /**
@@ -107,7 +97,8 @@ export class IntentDetector {
     }
 
     // Try LLM detection first
-    if (this.client && this.config.useLlm) {
+    const llmAvailable = await this.isLlmAvailable();
+    if (llmAvailable) {
       try {
         const result = await this.detectWithLlm(agentResponse, conversationHistory, pendingFields);
         this.saveToCache(cacheKey, result);
@@ -133,19 +124,19 @@ export class IntentDetector {
   ): Promise<IntentDetectionResult> {
     const prompt = this.buildPrompt(agentResponse, conversationHistory, pendingFields);
 
-    const response = await this.client!.messages.create({
-      model: this.config.model,
-      max_tokens: this.config.maxTokens,
-      temperature: this.config.temperature,
-      messages: [{ role: 'user', content: prompt }],
+    const response = await this.llmProvider.execute({
+      prompt,
+      model: this.detectorConfig.model,
+      maxTokens: this.detectorConfig.maxTokens,
+      temperature: this.detectorConfig.temperature,
+      timeout: this.detectorConfig.timeout,
     });
 
-    const textContent = response.content.find(c => c.type === 'text');
-    if (!textContent || textContent.type !== 'text') {
-      throw new Error('No text response from LLM');
+    if (!response.success || !response.content) {
+      throw new Error(response.error || 'No response from LLM');
     }
 
-    return this.parseResponse(textContent.text);
+    return this.parseResponse(response.content);
   }
 
   /**
@@ -194,9 +185,17 @@ Return ONLY a JSON object (no markdown, no explanation):
 - asking_new_patient, asking_previous_visit, asking_previous_ortho
 - asking_insurance, asking_special_needs, asking_time_preference, asking_location_preference
 - confirming_information, confirming_spelling, asking_proceed_confirmation
-- offering_time_slots, confirming_booking
+- searching_availability, offering_time_slots, confirming_booking
 - initiating_transfer, handling_error, asking_clarification
 - unknown
+
+CRITICAL DISTINCTIONS:
+- searching_availability: Agent says "Let me check", "One moment", "Checking availability" - NO specific time is mentioned
+- offering_time_slots: Agent offers a SPECIFIC time like "I have 9:30 AM available on Monday"
+- asking_time_preference: Agent asks "Do you prefer morning or afternoon?"
+
+Use searching_availability when the agent is actively looking up times but has NOT yet offered a specific slot.
+Use offering_time_slots ONLY when the agent mentions a specific day/time (e.g., "Monday at 2:00 PM").
 
 Note: Use asking_proceed_confirmation when agent asks "Would you like to proceed anyway?" (e.g., for out-of-network insurance)
 
@@ -285,12 +284,12 @@ Note: Use asking_proceed_confirmation when agent asks "Would you like to proceed
    * Get from cache if valid
    */
   private getFromCache(key: string): IntentDetectionResult | null {
-    if (!this.config.cacheEnabled) return null;
+    if (!this.detectorConfig.cacheEnabled) return null;
 
     const entry = this.cache.get(key);
     if (!entry) return null;
 
-    if (Date.now() - entry.timestamp > this.config.cacheTtlMs) {
+    if (Date.now() - entry.timestamp > this.detectorConfig.cacheTtlMs) {
       this.cache.delete(key);
       return null;
     }
@@ -302,7 +301,7 @@ Note: Use asking_proceed_confirmation when agent asks "Would you like to proceed
    * Save to cache
    */
   private saveToCache(key: string, result: IntentDetectionResult): void {
-    if (!this.config.cacheEnabled) return;
+    if (!this.detectorConfig.cacheEnabled) return;
 
     this.cache.set(key, {
       result,
@@ -321,7 +320,7 @@ Note: Use asking_proceed_confirmation when agent asks "Would you like to proceed
   private cleanCache(): void {
     const now = Date.now();
     for (const [key, entry] of this.cache.entries()) {
-      if (now - entry.timestamp > this.config.cacheTtlMs) {
+      if (now - entry.timestamp > this.detectorConfig.cacheTtlMs) {
         this.cache.delete(key);
       }
     }
