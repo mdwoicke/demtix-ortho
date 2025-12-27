@@ -40,7 +40,7 @@ export interface GoalTestRunnerConfig {
 }
 
 const DEFAULT_CONFIG: GoalTestRunnerConfig = {
-  maxTurns: 30,
+  maxTurns: 50,
   delayBetweenTurns: 500,
   turnTimeout: 30000,
   saveProgressSnapshots: true,
@@ -78,8 +78,13 @@ export class GoalTestRunner {
 
   /**
    * Run a goal-oriented test
+   * @param testCase The test case to run
+   * @param runId The run ID for this test execution
+   * @param testIdOverride Optional override for testId (e.g., "GOAL-HAPPY-001#2" for second run)
    */
-  async runTest(testCase: GoalOrientedTestCase, runId: string): Promise<GoalTestResult> {
+  async runTest(testCase: GoalOrientedTestCase, runId: string, testIdOverride?: string): Promise<GoalTestResult> {
+    // Use testIdOverride for storage if provided (supports multiple runs of same test)
+    const effectiveTestId = testIdOverride || testCase.id;
     const startTime = Date.now();
     const transcript: ConversationTurn[] = [];
 
@@ -206,7 +211,8 @@ export class GoalTestRunner {
     );
 
     // Save to database (include resolved persona if dynamic fields were used)
-    this.saveGoalTestResult(runId, testCase, result, transcript, lastError, resolvedPersona);
+    // Use effectiveTestId to ensure multiple runs of same test are stored separately
+    this.saveGoalTestResult(runId, effectiveTestId, testCase, result, transcript, lastError, resolvedPersona);
 
     return result;
   }
@@ -334,18 +340,36 @@ export class GoalTestRunner {
 
   /**
    * Check if intent indicates conversation should end
+   *
+   * IMPORTANT: Only stop for truly terminal intents where there's nothing more to do.
+   * Do NOT stop for:
+   * - offering_time_slots: User needs to select a time
+   * - confirming_information: User needs to confirm
+   * - initiating_transfer: Let goal evaluator handle this as a failure
+   *
+   * The previous implementation also stopped when !requiresUserResponse was true,
+   * which incorrectly stopped tests when the agent said transitional messages like
+   * "One moment while I look for open slots."
    */
   private isTerminalIntent(intent: IntentDetectionResult): boolean {
+    // Only these intents truly end the conversation successfully
     const terminalIntents = [
-      'saying_goodbye',
-      'confirming_booking',
-      'initiating_transfer',
+      'saying_goodbye',      // Agent said goodbye - conversation over
+      'confirming_booking',  // Booking was confirmed - success
     ];
 
-    return (
-      terminalIntents.includes(intent.primaryIntent) ||
-      !intent.requiresUserResponse
-    );
+    // For terminal intents, we need to be sure the conversation is actually ending
+    if (terminalIntents.includes(intent.primaryIntent)) {
+      // confirming_booking should only be terminal if confidence is high
+      if (intent.primaryIntent === 'confirming_booking' && intent.confidence < 0.8) {
+        return false; // Not confident enough, continue conversation
+      }
+      return true;
+    }
+
+    // Don't stop for other intents - let the conversation continue
+    // The goal evaluator will determine success/failure based on goals achieved
+    return false;
   }
 
   /**
@@ -374,9 +398,17 @@ export class GoalTestRunner {
 
   /**
    * Save goal test result to database
+   * @param runId The run ID
+   * @param testId The effective test ID (may include #N suffix for multiple runs)
+   * @param testCase The original test case definition
+   * @param result The test result
+   * @param transcript The conversation transcript
+   * @param errorMessage Optional error message
+   * @param resolvedPersona Optional resolved persona for dynamic tests
    */
   private saveGoalTestResult(
     runId: string,
+    testId: string,
     testCase: GoalOrientedTestCase,
     result: GoalTestResult,
     transcript: ConversationTurn[],
@@ -426,7 +458,7 @@ export class GoalTestRunner {
 
       const testResult: TestResult = {
         runId,
-        testId: testCase.id,
+        testId,  // Use the effective testId (may include #N suffix for multiple runs)
         testName: testCase.name,
         category: testCase.category,
         status: result.passed ? 'passed' : 'failed',
@@ -448,7 +480,7 @@ export class GoalTestRunner {
       // Save goal-specific results (include resolved persona if dynamic fields were used)
       this.database.saveGoalTestResult({
         runId,
-        testId: testCase.id,
+        testId,  // Use the effective testId (may include #N suffix for multiple runs)
         passed: result.passed ? 1 : 0,
         turnCount: result.turnCount,
         durationMs: result.durationMs,

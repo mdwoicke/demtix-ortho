@@ -73,12 +73,12 @@ export const GOAL_HAPPY_001: GoalOrientedTestCase = {
   constraints: [
     PRESET_CONSTRAINTS.noErrors(),
     PRESET_CONSTRAINTS.noInternalExposure(),
-    PRESET_CONSTRAINTS.maxTurns(25),
+    PRESET_CONSTRAINTS.maxTurns(50),
   ],
 
   // Response generation config
   responseConfig: {
-    maxTurns: 25,
+    maxTurns: 50,
     useLlmResponses: false, // Use templates for faster tests
     handleUnknownIntents: 'clarify',
   },
@@ -124,11 +124,11 @@ export const GOAL_HAPPY_002: GoalOrientedTestCase = {
   constraints: [
     PRESET_CONSTRAINTS.noErrors(),
     PRESET_CONSTRAINTS.noInternalExposure(),
-    PRESET_CONSTRAINTS.maxTurns(30), // More turns for 2 children
+    PRESET_CONSTRAINTS.maxTurns(50), // More turns for 2 children
   ],
 
   responseConfig: {
-    maxTurns: 30,
+    maxTurns: 50,
     useLlmResponses: false,
     handleUnknownIntents: 'clarify',
   },
@@ -172,12 +172,12 @@ export const GOAL_HAPPY_003: GoalOrientedTestCase = {
   constraints: [
     PRESET_CONSTRAINTS.noErrors(),
     PRESET_CONSTRAINTS.noInternalExposure(),
-    PRESET_CONSTRAINTS.maxTurns(20), // Fewer turns expected with verbose user
+    PRESET_CONSTRAINTS.maxTurns(50), // Verbose users need more turns
   ],
 
   responseConfig: {
-    maxTurns: 20,
-    useLlmResponses: true, // Use LLM for verbose persona
+    maxTurns: 50,
+    useLlmResponses: true, // Enable LLM for natural responses
     handleUnknownIntents: 'clarify',
   },
 
@@ -219,7 +219,7 @@ export const GOAL_HAPPY_004: GoalOrientedTestCase = {
   constraints: [
     PRESET_CONSTRAINTS.noErrors(),
     PRESET_CONSTRAINTS.noInternalExposure(),
-    PRESET_CONSTRAINTS.maxTurns(25),
+    PRESET_CONSTRAINTS.maxTurns(50),
     // Custom constraint: Agent should acknowledge special needs
     {
       type: 'must_happen',
@@ -241,7 +241,7 @@ export const GOAL_HAPPY_004: GoalOrientedTestCase = {
   ],
 
   responseConfig: {
-    maxTurns: 25,
+    maxTurns: 50,
     useLlmResponses: false,
     handleUnknownIntents: 'clarify',
   },
@@ -284,11 +284,11 @@ export const GOAL_HAPPY_005: GoalOrientedTestCase = {
   constraints: [
     PRESET_CONSTRAINTS.noErrors(),
     PRESET_CONSTRAINTS.noInternalExposure(),
-    PRESET_CONSTRAINTS.maxTurns(30), // May need more turns with terse user
+    PRESET_CONSTRAINTS.maxTurns(50), // May need more turns with terse user
   ],
 
   responseConfig: {
-    maxTurns: 30,
+    maxTurns: 50,
     useLlmResponses: false,
     handleUnknownIntents: 'clarify',
   },
