@@ -221,17 +221,29 @@ program
 
       console.log('\n E2E Test Agent\n');
 
+      // Load goal tests for summary
+      const dbGoalTests = loadGoalTestsFromDatabase();
+      const allGoalTests = [...goalHappyPathScenarios, ...dbGoalTests];
+      const goalTestCount = allGoalTests.length;
+
       const summary = getScenarioSummary();
-      console.log(`Available scenarios: ${summary.total}`);
-      console.log(`  - Happy Path: ${summary.byCategory['happy-path']}`);
-      console.log(`  - Edge Cases: ${summary.byCategory['edge-case']}`);
-      console.log(`  - Error Handling: ${summary.byCategory['error-handling']}`);
+      console.log(`Available scenarios: ${summary.total + goalTestCount}`);
+      console.log(`  - Goal Tests: ${goalTestCount} (dynamic flow)`);
+      console.log(`  - Happy Path: ${summary.byCategory['happy-path']} (legacy)`);
+      console.log(`  - Edge Cases: ${summary.byCategory['edge-case']} (legacy)`);
+      console.log(`  - Error Handling: ${summary.byCategory['error-handling']} (legacy)`);
       console.log('');
 
-      // Parse scenarios option (comma-separated)
-      const scenarioIds: string[] | undefined = options.scenarios
+      // Parse scenarios option (comma-separated) - also handle single --scenario
+      let scenarioIds: string[] | undefined = options.scenarios
         ? options.scenarios.split(',').map((s: string) => s.trim())
         : undefined;
+
+      // If --scenario (singular) is provided, add it to scenarioIds
+      if (options.scenario) {
+        scenarioIds = scenarioIds ? [...scenarioIds, options.scenario] : [options.scenario];
+      }
+
       if (scenarioIds) {
         console.log(`Filtering to scenarios: ${scenarioIds.join(', ')}`);
       }
@@ -258,7 +270,6 @@ program
           console.log('\nAlso running regular tests...\n');
           const regularResult = await agent.run({
             category: options.category,
-            scenario: options.scenario,
             scenarioIds: regularScenarioIds,
             failedOnly: options.failed,
             watch: options.watch,
@@ -280,8 +291,7 @@ program
         // Run regular tests using TestAgent
         result = await agent.run({
           category: options.category,
-          scenario: options.scenario,
-          scenarioIds, // New: support multiple scenario IDs
+          scenarioIds, // Unified handling for single and multiple scenarios
           failedOnly: options.failed,
           watch: options.watch,
           concurrency,
@@ -510,36 +520,77 @@ program
   .command('scenarios')
   .description('List available test scenarios')
   .option('-c, --category <category>', 'Filter by category')
+  .option('-g, --goal-tests', 'Show only goal-oriented tests')
+  .option('-a, --all', 'Show both legacy and goal-oriented tests')
   .action((options) => {
     try {
       const { allScenarios } = require('./tests/scenarios');
-      let scenarios = allScenarios;
+
+      // Load goal tests (TypeScript + database)
+      const dbGoalTests = loadGoalTestsFromDatabase();
+      const allGoalTests = [...goalHappyPathScenarios, ...dbGoalTests];
+
+      // Determine what to show
+      const showGoalTests = options.goalTests || options.all || !options.category;
+      const showLegacyTests = !options.goalTests || options.all;
+
+      let scenarios = showLegacyTests ? allScenarios : [];
+      let goalTests = showGoalTests ? allGoalTests : [];
 
       if (options.category) {
         scenarios = scenarios.filter((s: any) => s.category === options.category);
+        goalTests = goalTests.filter((s: any) => s.category === options.category);
       }
 
       console.log('\n Available Test Scenarios\n');
       console.log('─'.repeat(70));
 
-      const categories = ['happy-path', 'edge-case', 'error-handling'];
-
-      for (const cat of categories) {
-        const catScenarios = scenarios.filter((s: any) => s.category === cat);
-        if (catScenarios.length === 0) continue;
-
-        console.log(`\n${cat.toUpperCase().replace('-', ' ')}`);
+      // Show goal-oriented tests first
+      if (goalTests.length > 0) {
+        console.log('\n GOAL-ORIENTED TESTS (Dynamic Flow)');
         console.log('');
 
-        for (const scenario of catScenarios) {
-          console.log(`  ${scenario.id}`);
-          console.log(`    ${scenario.name}`);
-          console.log(`    Steps: ${scenario.steps.length} | Tags: ${scenario.tags.join(', ')}`);
+        const goalCategories = ['happy-path', 'edge-case', 'error-handling'];
+        for (const cat of goalCategories) {
+          const catTests = goalTests.filter((s: any) => s.category === cat);
+          if (catTests.length === 0) continue;
+
+          console.log(`  ${cat.toUpperCase().replace('-', ' ')}`);
+          for (const test of catTests) {
+            console.log(`    ${test.id}`);
+            console.log(`      ${test.name}`);
+            console.log(`      Goals: ${test.goals?.length || 0} | Persona: ${test.persona?.name || 'N/A'}`);
+          }
+          console.log('');
+        }
+      }
+
+      // Show legacy tests
+      if (scenarios.length > 0) {
+        console.log('\n LEGACY TESTS (Script-Based)');
+
+        const categories = ['happy-path', 'edge-case', 'error-handling'];
+        for (const cat of categories) {
+          const catScenarios = scenarios.filter((s: any) => s.category === cat);
+          if (catScenarios.length === 0) continue;
+
+          console.log(`\n  ${cat.toUpperCase().replace('-', ' ')}`);
+
+          for (const scenario of catScenarios) {
+            console.log(`    ${scenario.id}`);
+            console.log(`      ${scenario.name}`);
+            console.log(`      Steps: ${scenario.steps.length} | Tags: ${scenario.tags.join(', ')}`);
+          }
         }
       }
 
       console.log('\n' + '─'.repeat(70));
-      console.log(`Total: ${scenarios.length} scenarios\n`);
+      console.log(`Total: ${goalTests.length} goal tests + ${scenarios.length} legacy tests = ${goalTests.length + scenarios.length} scenarios`);
+      console.log('\nUsage:');
+      console.log('  npm run run -- --scenario GOAL-HAPPY-001   # Run single goal test');
+      console.log('  npm run run -- --scenarios GOAL-HAPPY-001,GOAL-HAPPY-002');
+      console.log('  npm run run -- --scenario HAPPY-001        # Run single legacy test');
+      console.log('');
 
     } catch (error: any) {
       reporter.printError(error.message);
