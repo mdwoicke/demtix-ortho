@@ -35,9 +35,27 @@ type FixCategory = 'prompt' | 'tool' | 'test-agent';
  */
 function getFixCategory(targetFile: string): FixCategory {
   const normalized = targetFile.toLowerCase();
-  if (normalized.includes('systemprompt') || normalized.endsWith('.md')) return 'prompt';
-  if (normalized.includes('chord_dso') || (normalized.includes('docs/') && normalized.endsWith('.js'))) return 'tool';
-  if (normalized.includes('test-agent/')) return 'test-agent';
+
+  // Flowise system prompts - check various patterns
+  if (
+    normalized.includes('systemprompt') ||          // SystemPrompt.md
+    normalized.includes('system prompt') ||          // "System prompt (Flowise..."
+    normalized.includes('systemmessage') ||          // toolAgent_0.systemMessage
+    (normalized.endsWith('.md') && !normalized.includes('test-agent'))
+  ) {
+    return 'prompt';
+  }
+
+  // Flowise tools - DSO scheduling/patient tools
+  if (normalized.includes('chord_dso') || (normalized.includes('docs/') && normalized.endsWith('.js'))) {
+    return 'tool';
+  }
+
+  // Test agent code
+  if (normalized.includes('test-agent/') || normalized.includes('test-cases/')) {
+    return 'test-agent';
+  }
+
   return 'prompt'; // Default to prompt for bot-related fixes
 }
 
