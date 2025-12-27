@@ -3,15 +3,17 @@
  * Manage AI-generated fixes and prompt versions
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAppDispatch, useAppSelector } from '../../hooks';
 import { PageHeader } from '../../components/layout';
 import { Card } from '../../components/ui';
-import { FixesPanel, ClassificationFilter } from '../../components/features/testMonitor/FixesPanel';
+import { FixesPanel } from '../../components/features/testMonitor/FixesPanel';
+import type { ClassificationFilter } from '../../components/features/testMonitor/FixesPanel';
 import { DiagnosisPanel } from '../../components/features/testMonitor/DiagnosisPanel';
 import { VerificationPanel } from '../../components/features/testMonitor/VerificationPanel';
 import { SyncStatusIndicator } from '../../components/features/testMonitor/SyncStatusIndicator';
 import { FixAnalytics } from '../../components/features/testMonitor/FixAnalytics';
+import { WorkflowIndicator, type WorkflowStep } from '../../components/features/testMonitor/WorkflowIndicator';
 import {
   fetchFixes,
   fetchPromptFiles,
@@ -65,6 +67,8 @@ export function AgentTuning() {
   const [selectedRunId, setSelectedRunId] = useState<string>('');
   // Phase 5: Classification filter state (shared between FixesPanel and FixAnalytics)
   const [classificationFilter, setClassificationFilter] = useState<ClassificationFilter>('all');
+  // Phase 6: Track if diagnosis has run (for workflow indicator)
+  const [diagnosisRan, setDiagnosisRan] = useState(false);
 
   // Get latest run info for diagnosis
   const latestRun = testRuns.length > 0 ? testRuns[0] : null;
@@ -94,6 +98,7 @@ export function AgentTuning() {
   const handleDiagnosisComplete = useCallback(() => {
     if (activeRunId) {
       dispatch(fetchFixes(activeRunId));
+      setDiagnosisRan(true); // Phase 6: Track diagnosis completion
     }
   }, [dispatch, activeRunId]);
 
@@ -107,6 +112,92 @@ export function AgentTuning() {
   // Filter pending fixes
   const pendingFixes = fixes.filter((f) => f.status === 'pending');
   const appliedFixes = fixes.filter((f) => f.status === 'applied');
+
+  // Phase 6: Calculate bot fixes count for Flowise sync prominence
+  const appliedBotFixes = appliedFixes.filter(f =>
+    f.classification?.issueLocation === 'bot' || f.classification?.issueLocation === 'both'
+  );
+  const pendingBotFixes = pendingFixes.filter(f =>
+    f.classification?.issueLocation === 'bot' || f.classification?.issueLocation === 'both'
+  );
+
+  // Phase 6: Check if there are pending Flowise changes
+  const hasPendingFlowiseChanges = useMemo(() => {
+    return promptFiles.some(file => {
+      const deployedVersion = deployedVersions[file.fileKey];
+      return deployedVersion === undefined || deployedVersion !== file.version;
+    });
+  }, [promptFiles, deployedVersions]);
+
+  // Phase 6: Workflow steps calculation
+  const workflowSteps: WorkflowStep[] = useMemo(() => {
+    // Step 1: Run Diagnosis
+    const hasDiagnosis = diagnosisRan || fixes.length > 0;
+
+    // Step 2: Apply Bot Fixes
+    const hasPendingBot = pendingBotFixes.length > 0;
+    const hasAppliedBot = appliedBotFixes.length > 0;
+    const botFixesComplete = hasAppliedBot && !hasPendingBot;
+
+    // Step 3: Verify Fixes
+    const hasVerifiedFixes = appliedFixes.some(f => f.status === 'verified');
+    const verifyComplete = verificationResult?.passed === true;
+
+    // Step 4: Deploy to Flowise
+    const deployComplete = !hasPendingFlowiseChanges && hasAppliedBot;
+
+    return [
+      {
+        id: 'diagnosis',
+        label: 'Run Diagnosis',
+        status: hasDiagnosis ? 'completed' : 'pending',
+        count: fixes.length,
+      },
+      {
+        id: 'apply-bot',
+        label: 'Apply Bot Fixes',
+        status: botFixesComplete
+          ? 'completed'
+          : hasPendingBot
+          ? 'in_progress'
+          : hasAppliedBot
+          ? 'completed'
+          : 'pending',
+        count: pendingBotFixes.length + appliedBotFixes.length,
+      },
+      {
+        id: 'verify',
+        label: 'Verify Fixes',
+        status: verifyComplete
+          ? 'completed'
+          : verificationRunning
+          ? 'in_progress'
+          : botFixesComplete || hasAppliedBot
+          ? 'pending'
+          : 'pending',
+        count: hasVerifiedFixes ? 1 : 0,
+      },
+      {
+        id: 'deploy',
+        label: 'Deploy to Flowise',
+        status: deployComplete
+          ? 'completed'
+          : hasPendingFlowiseChanges && hasAppliedBot
+          ? 'in_progress'
+          : 'pending',
+        count: hasPendingFlowiseChanges ? 1 : 0,
+      },
+    ];
+  }, [
+    diagnosisRan,
+    fixes.length,
+    pendingBotFixes.length,
+    appliedBotFixes.length,
+    appliedFixes,
+    verificationResult,
+    verificationRunning,
+    hasPendingFlowiseChanges,
+  ]);
 
   // Handle apply fix (single)
   const handleApplyFix = async (fixId: string, fileKey: string) => {
@@ -238,6 +329,21 @@ export function AgentTuning() {
         subtitle="Review AI-generated fixes and manage prompt versions"
       />
 
+      {/* Phase 6: Workflow Progress Indicator */}
+      <div className="mt-6">
+        <Card>
+          <div className="p-4">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+              <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+              </svg>
+              Tuning Workflow
+            </h3>
+            <WorkflowIndicator steps={workflowSteps} />
+          </div>
+        </Card>
+      </div>
+
       {/* Run Selector - Above the panels */}
       <div className="mt-6 flex items-center gap-4">
         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -284,6 +390,8 @@ export function AgentTuning() {
             onMarkDeployed={handleMarkDeployed}
             onCopyPrompt={handleCopyPrompt}
             loading={deploymentLoading}
+            hasRecentlyAppliedFixes={appliedBotFixes.length > 0}
+            appliedBotFixesCount={appliedBotFixes.length}
           />
         </div>
       </div>
