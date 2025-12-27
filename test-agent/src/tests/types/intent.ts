@@ -39,6 +39,7 @@ export type AgentIntent =
   | 'confirming_information'
   | 'confirming_spelling'
   | 'asking_proceed_confirmation'  // "Would you like to proceed anyway?" (e.g., out-of-network insurance)
+  | 'reminding_bring_card'         // "Please bring your insurance card to the appointment"
 
   // Booking flow
   | 'searching_availability'  // Bot is looking up available times
@@ -72,6 +73,7 @@ export const INTENT_TO_FIELD: Partial<Record<AgentIntent, string>> = {
   'asking_special_needs': 'special_needs',
   'asking_time_preference': 'time_preference',
   'asking_location_preference': 'location_preference',
+  'reminding_bring_card': 'card_reminder',
 };
 
 /**
@@ -181,6 +183,12 @@ export const INTENT_KEYWORDS: Record<AgentIntent, RegExp[]> = {
     /\bnot in.?network\b.*\b(proceed|continue|anyway)\b/i,
     /\b(proceed|continue) anyway\b/i,
   ],
+  'reminding_bring_card': [
+    /\bbring your insurance card\b/i,                          // "Please bring your insurance card"
+    /\bbring.*(insurance|coverage) card\b/i,                   // "bring your insurance card to the appointment"
+    /\binsurance card.*(to|at) the appointment\b/i,            // "insurance card to the appointment"
+    /\bverify your coverage\b/i,                               // "verify your coverage details"
+  ],
 
   'searching_availability': [
     /\b(let me check|one moment|checking|looking up|look up)\b.*\b(available|availability|times|slots)\b/i,
@@ -254,6 +262,7 @@ const INTENT_PRIORITY_ORDER: AgentIntent[] = [
 
   // Specific confirmations - check AFTER patient status questions
   'asking_proceed_confirmation',
+  'reminding_bring_card',  // "bring your insurance card" - after out-of-network disclosure
   'confirming_spelling',
   'confirming_information',
 

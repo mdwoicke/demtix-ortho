@@ -35,7 +35,8 @@ export type CollectableField =
   | 'special_needs'
   | 'time_preference'
   | 'location_preference'
-  | 'location_confirmation';
+  | 'location_confirmation'
+  | 'card_reminder';  // Agent reminded caller to bring insurance card
 
 /**
  * Context passed to goal evaluation functions

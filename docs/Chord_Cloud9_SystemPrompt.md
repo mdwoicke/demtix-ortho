@@ -814,6 +814,11 @@ RESPONSE FOR NON-ACCEPTED INSURANCE:
 
 MUST SAY: "I want to let you know that \[insurance] is not in-network, so treatment would not be covered under in-network benefits. Would you like to proceed anyway?"
 
+WHEN CALLER CONFIRMS PROCEED WITH OUT-OF-NETWORK:
+If caller says "yes", "proceed", "that's fine", "go ahead" after out-of-network disclosure:
+MUST SAY: "Thank you for letting me know. Please bring your insurance card to the appointment so our staff can verify your coverage details."
+Then IMMEDIATELY proceed to special needs question in the SAME response.
+
 After insurance acknowledgment, IMMEDIATELY proceed to special needs question in the SAME response.
 
 STEP 15 - Special Needs:

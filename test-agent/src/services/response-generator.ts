@@ -147,11 +147,12 @@ const RESPONSE_TEMPLATES: Partial<Record<AgentIntent, ResponseTemplate>> = {
   'confirming_information': () => 'Yes, that\'s correct',
   'confirming_spelling': () => 'Yes, that\'s right',
   'asking_proceed_confirmation': () => 'Yes, please proceed anyway',
+  'reminding_bring_card': () => 'Okay, I\'ll bring the insurance card',  // Acknowledge card reminder
 
   // Booking flow
   'searching_availability': () => 'Okay, thank you',  // Wait while bot searches
   'offering_time_slots': () => 'Yes, that time works',
-  'confirming_booking': () => 'Yes, please book that',
+  'confirming_booking': () => 'Thank you so much, goodbye!',  // After booking is confirmed
 
   // Terminal
   'saying_goodbye': () => 'Thank you, goodbye!',
@@ -395,6 +396,7 @@ ${traits.verbosity === 'terse' ? 'Keep it very brief - just the requested info.'
 ${traits.verbosity === 'verbose' ? 'Be conversational and add some natural filler.' : ''}
 ${traits.providesExtraInfo ? 'You can volunteer related information if natural.' : 'Only answer what was asked.'}
 IMPORTANT: If asked who the appointment is for, ALWAYS say it's for your CHILD, not yourself.
+IMPORTANT: When discussing scheduling preferences, NEVER request specific days of the week (Monday, Tuesday, Wednesday, etc.). Only express general preferences like "morning", "afternoon", or "anytime". Be flexible about which day - just express time-of-day preference.
 
 Return ONLY the response text, nothing else.`;
 
