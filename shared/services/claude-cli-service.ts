@@ -84,14 +84,22 @@ export class ClaudeCliService {
         '--print',
         '--output-format', 'json',
         '--model', 'haiku',
-      ], 15000, tempFile);
+      ], 30000, tempFile); // Increased timeout for auth check
       try { fs.unlinkSync(tempFile); } catch { /* ignore */ }
+
+      // Debug: Log auth check result
+      if (!authResult.success) {
+        console.log('[ClaudeCLI] Auth check failed:', authResult.error);
+        if (authResult.result) {
+          console.log('[ClaudeCLI] Auth check output:', authResult.result.substring(0, 200));
+        }
+      }
 
       this.statusCache = {
         installed: true,
         authenticated: authResult.success,
         version: versionResult.result?.trim(),
-        error: authResult.success ? undefined : 'Claude CLI not authenticated. Run "claude login" to authenticate.',
+        error: authResult.success ? undefined : `Claude CLI auth check failed: ${authResult.error || 'unknown error'}`,
       };
       this.statusCacheTime = Date.now();
       return this.statusCache;
