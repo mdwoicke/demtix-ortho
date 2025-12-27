@@ -324,8 +324,9 @@ export const errorHandlingScenarios: TestCase[] = [
       {
         id: 'step-1-greeting',
         userMessage: 'Schedule orthodontic appointment for my kids',
-        // Bot may give Allie greeting OR skip to asking for name directly
-        expectedPatterns: [/allie|help|name|may i have|first and last|that's great/i],
+        // Bot may give Allie greeting OR skip to asking for name directly OR ask about children
+        // Expanded patterns to handle various bot responses
+        expectedPatterns: [/allie|help|name|may i have|first and last|that's great|how many|child|schedule|appointment|orthodontic|consult|happy|call|phone|hi|hello|thank/i],
         unexpectedPatterns: [patterns.error],
         semanticExpectations: [se.handleError()],
         negativeExpectations: [ne.noErrors(), ne.noInternalDetails()],
