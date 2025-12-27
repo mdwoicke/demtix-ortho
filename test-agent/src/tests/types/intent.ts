@@ -41,7 +41,8 @@ export type AgentIntent =
   | 'asking_proceed_confirmation'  // "Would you like to proceed anyway?" (e.g., out-of-network insurance)
 
   // Booking flow
-  | 'offering_time_slots'
+  | 'searching_availability'  // Bot is looking up available times
+  | 'offering_time_slots'     // Bot is presenting specific time options
   | 'confirming_booking'
 
   // Transfers & errors
@@ -134,8 +135,24 @@ export const INTENT_KEYWORDS: Record<AgentIntent, RegExp[]> = {
     /\b(proceed|continue) anyway\b/i,
   ],
 
-  'offering_time_slots': [/\b(available|slot|opening|can see you)\b/i],
-  'confirming_booking': [/\b(booked|scheduled|confirmed|appointment.*set)\b/i],
+  'searching_availability': [
+    /\b(let me check|one moment|checking|looking up|look up)\b.*\b(available|availability|times|slots)\b/i,
+    /\b(available|availability).*\b(let me|one moment|checking)\b/i,
+  ],
+  'offering_time_slots': [
+    /\b(I have|we have|there is|there are).*\b(available|opening|slot)\b/i,
+    /\bcan see you (on|at)\b/i,
+    /\bI can offer\b/i,
+    /\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday).*\b(at|available)\b/i,
+  ],
+  'confirming_booking': [
+    /\bappointment has been (successfully )?scheduled\b/i,
+    /\bappointment.*scheduled\b/i,
+    /\b(booked|scheduled) .* for (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)/i,
+    /\bI have booked\b/i,
+    /\byour appointment is confirmed\b/i,
+    /\bappointment.*set\b/i,
+  ],
 
   'initiating_transfer': [/\b(transfer|connect|live agent|specialist|hold)\b/i],
   'handling_error': [/\b(sorry|apologize|trouble|try again)\b/i],
@@ -145,14 +162,66 @@ export const INTENT_KEYWORDS: Record<AgentIntent, RegExp[]> = {
 };
 
 /**
+ * Priority order for intent detection - terminal/important intents checked first
+ * This prevents less specific patterns from matching before terminal intents
+ */
+const INTENT_PRIORITY_ORDER: AgentIntent[] = [
+  // Terminal intents - check these FIRST (most important)
+  'confirming_booking',
+  'saying_goodbye',
+  'initiating_transfer',
+
+  // Specific confirmations
+  'asking_proceed_confirmation',
+  'confirming_spelling',
+  'confirming_information',
+
+  // Booking flow - check searching BEFORE offering
+  'searching_availability',
+  'offering_time_slots',
+
+  // Specific questions (most specific first)
+  'asking_spell_name',
+  'asking_child_dob',
+  'asking_child_age',
+  'asking_child_name',
+  'asking_child_count',
+  'asking_parent_name',
+  'asking_phone',
+  'asking_email',
+
+  // Patient status
+  'asking_new_patient',
+  'asking_previous_ortho',
+  'asking_previous_visit',
+
+  // Preferences (less specific patterns - checked last)
+  'asking_insurance',
+  'asking_special_needs',
+  'asking_location_preference',
+  'asking_time_preference',
+
+  // Error handling
+  'handling_error',
+  'asking_clarification',
+
+  // Generic
+  'greeting',
+];
+
+/**
  * Simple keyword-based intent detection (fallback when LLM unavailable)
+ * Uses priority ordering to check terminal intents first
  */
 export function detectIntentByKeywords(response: string): AgentIntent {
-  for (const [intent, patterns] of Object.entries(INTENT_KEYWORDS)) {
-    if (intent === 'unknown') continue;
+  // Check intents in priority order
+  for (const intent of INTENT_PRIORITY_ORDER) {
+    const patterns = INTENT_KEYWORDS[intent];
+    if (!patterns || patterns.length === 0) continue;
+
     for (const pattern of patterns) {
       if (pattern.test(response)) {
-        return intent as AgentIntent;
+        return intent;
       }
     }
   }

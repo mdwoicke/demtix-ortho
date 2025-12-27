@@ -341,21 +341,22 @@ export class GoalTestRunner {
   /**
    * Check if intent indicates conversation should end
    *
-   * IMPORTANT: Only stop for truly terminal intents where there's nothing more to do.
+   * IMPORTANT: Stop for terminal intents where there's nothing more to do.
+   * - saying_goodbye: Conversation ending
+   * - confirming_booking: Booking confirmed (success)
+   * - initiating_transfer: Bot is transferring to human agent (failure - booking incomplete)
+   *
    * Do NOT stop for:
    * - offering_time_slots: User needs to select a time
    * - confirming_information: User needs to confirm
-   * - initiating_transfer: Let goal evaluator handle this as a failure
-   *
-   * The previous implementation also stopped when !requiresUserResponse was true,
-   * which incorrectly stopped tests when the agent said transitional messages like
-   * "One moment while I look for open slots."
+   * - searching_availability: Bot is looking up times
    */
   private isTerminalIntent(intent: IntentDetectionResult): boolean {
-    // Only these intents truly end the conversation successfully
+    // These intents end the conversation
     const terminalIntents = [
-      'saying_goodbye',      // Agent said goodbye - conversation over
-      'confirming_booking',  // Booking was confirmed - success
+      'saying_goodbye',       // Agent said goodbye - conversation over
+      'confirming_booking',   // Booking was confirmed - success
+      'initiating_transfer',  // Agent transferring to human - stop to avoid loop
     ];
 
     // For terminal intents, we need to be sure the conversation is actually ending

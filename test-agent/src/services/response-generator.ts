@@ -2,7 +2,8 @@
  * Response Generator Service
  *
  * Generates user responses based on agent intent and persona inventory.
- * Uses hybrid approach: templates by default, LLM for complex/verbose cases.
+ * Uses hybrid approach: templates by default when useLlm=false, LLM when useLlm=true.
+ * LLM usage is controlled independently of persona verbosity level.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -30,7 +31,7 @@ export interface ResponseGeneratorConfig {
 
 const DEFAULT_CONFIG: ResponseGeneratorConfig = {
   useLlm: false, // Templates by default (hybrid approach)
-  model: 'claude-sonnet-4-20250514',
+  model: 'claude-opus-4-5-20251101', // Opus 4.5 for highest quality response generation
   temperature: 0.7,
   maxTokens: 256,
 };
@@ -148,6 +149,7 @@ const RESPONSE_TEMPLATES: Partial<Record<AgentIntent, ResponseTemplate>> = {
   'asking_proceed_confirmation': () => 'Yes, please proceed anyway',
 
   // Booking flow
+  'searching_availability': () => 'Okay, thank you',  // Wait while bot searches
   'offering_time_slots': () => 'Yes, that time works',
   'confirming_booking': () => 'Yes, please book that',
 
@@ -189,7 +191,9 @@ export class ResponseGenerator {
   }
 
   private initializeClient(): void {
-    if (this.config.useLlm || this.persona.traits.verbosity === 'verbose') {
+    // Only initialize LLM client when explicitly enabled via config
+    // Verbosity level no longer forces LLM - templates work for all verbosity levels
+    if (this.config.useLlm) {
       const token = process.env.CLAUDE_CODE_OAUTH_TOKEN ||
                     process.env.ANTHROPIC_API_KEY;
       if (token) {
@@ -217,7 +221,7 @@ export class ResponseGenerator {
       return this.generateTemplateResponse(intent.primaryIntent, data);
     }
 
-    // Use LLM for complex/verbose responses
+    // Use LLM when enabled via config
     return this.generateLlmResponse(intent, data, conversationHistory);
   }
 
@@ -225,20 +229,16 @@ export class ResponseGenerator {
    * Determine if we should use LLM instead of template
    */
   private shouldUseLlm(intent: IntentDetectionResult): boolean {
-    // Always use templates for simple cases (hybrid approach)
+    // No LLM client available - use templates
     if (!this.client) return false;
 
-    // Use LLM for verbose personas
-    if (this.persona.traits.verbosity === 'verbose') return true;
-
-    // Use LLM for unknown intents
+    // LLM is enabled - use it for unknown intents or low confidence
     if (intent.primaryIntent === 'unknown') return true;
-
-    // Use LLM if intent has low confidence
     if (intent.confidence < 0.5) return true;
 
-    // Otherwise use templates (faster, deterministic)
-    return false;
+    // LLM is enabled - use it for all responses (respects verbosity in prompt)
+    // The LLM prompt already handles different verbosity levels appropriately
+    return true;
   }
 
   /**
@@ -364,10 +364,18 @@ export class ResponseGenerator {
     const traits = this.persona.traits;
     const recentHistory = history.slice(-4);
 
-    const prompt = `You are simulating a test user calling an orthodontic office to schedule an appointment.
+    const childInfo = this.persona.inventory.children.map(c =>
+      `${c.firstName} ${c.lastName} (DOB: ${c.dateOfBirth})`
+    ).join(', ');
+
+    const prompt = `You are simulating a PARENT calling an orthodontic office to schedule an appointment FOR THEIR CHILD.
+
+## CRITICAL RULE
+The appointment is ALWAYS for your CHILD, never for yourself. You are the parent calling on behalf of your child.
+Your children: ${childInfo}
 
 ## Your Persona
-- Name: ${this.persona.name}
+- Name: ${this.persona.name} (you are the PARENT)
 - Verbosity: ${traits.verbosity}
 - Provides extra unrequested info: ${traits.providesExtraInfo}
 
@@ -386,6 +394,7 @@ Generate a natural response as this persona would give.
 ${traits.verbosity === 'terse' ? 'Keep it very brief - just the requested info.' : ''}
 ${traits.verbosity === 'verbose' ? 'Be conversational and add some natural filler.' : ''}
 ${traits.providesExtraInfo ? 'You can volunteer related information if natural.' : 'Only answer what was asked.'}
+IMPORTANT: If asked who the appointment is for, ALWAYS say it's for your CHILD, not yourself.
 
 Return ONLY the response text, nothing else.`;
 
