@@ -200,4 +200,79 @@ router.post('/goal-tests/sync', testMonitorController.syncGoalTestCases);
 // GET /api/test-monitor/goal-tests/personas - List available persona presets
 router.get('/goal-tests/personas', testMonitorController.getPersonaPresets);
 
+// ============================================================================
+// A/B TESTING ROUTES
+// ============================================================================
+
+// GET /api/test-monitor/ab/experiments - List all A/B experiments
+router.get('/ab/experiments', testMonitorController.getABExperiments);
+
+// GET /api/test-monitor/ab/experiments/:experimentId - Get experiment details
+router.get('/ab/experiments/:experimentId', testMonitorController.getABExperiment);
+
+// GET /api/test-monitor/ab/experiments/:experimentId/runs - Get experiment runs
+router.get('/ab/experiments/:experimentId/runs', testMonitorController.getABExperimentRuns);
+
+// GET /api/test-monitor/ab/variants - List all variants
+router.get('/ab/variants', testMonitorController.getABVariants);
+
+// GET /api/test-monitor/ab/stats - Get A/B testing statistics summary
+router.get('/ab/stats', testMonitorController.getABStats);
+
+// ============================================================================
+// SANDBOX COMPARISON ROUTES (must come before parameterized :sandboxId routes)
+// ============================================================================
+
+// POST /api/test-monitor/sandboxes/test-langfuse - Test LangFuse connection
+router.post('/sandboxes/test-langfuse', testMonitorController.testLangfuseConnection);
+
+// GET /api/test-monitor/sandboxes/comparison/tests - Get available tests for comparison
+router.get('/sandboxes/comparison/tests', testMonitorController.getComparisonTests);
+
+// POST /api/test-monitor/sandboxes/comparison/run - Start a comparison run
+router.post('/sandboxes/comparison/run', testMonitorController.startComparison);
+
+// GET /api/test-monitor/sandboxes/comparison/:comparisonId - Get comparison results
+router.get('/sandboxes/comparison/:comparisonId', testMonitorController.getComparisonRun);
+
+// GET /api/test-monitor/sandboxes/comparison - Get comparison history
+router.get('/sandboxes/comparison', testMonitorController.getComparisonHistory);
+
+// ============================================================================
+// SANDBOX ROUTES
+// ============================================================================
+
+// GET /api/test-monitor/sandboxes - List all sandboxes
+router.get('/sandboxes', testMonitorController.getSandboxes);
+
+// GET /api/test-monitor/sandboxes/:sandboxId - Get sandbox details
+router.get('/sandboxes/:sandboxId', testMonitorController.getSandbox);
+
+// PUT /api/test-monitor/sandboxes/:sandboxId - Update sandbox configuration
+router.put('/sandboxes/:sandboxId', testMonitorController.updateSandbox);
+
+// GET /api/test-monitor/sandboxes/:sandboxId/files - Get all sandbox files
+router.get('/sandboxes/:sandboxId/files', testMonitorController.getSandboxFiles);
+
+// GET /api/test-monitor/sandboxes/:sandboxId/files/:fileKey - Get specific sandbox file
+router.get('/sandboxes/:sandboxId/files/:fileKey', testMonitorController.getSandboxFile);
+
+// GET /api/test-monitor/sandboxes/:sandboxId/files/:fileKey/history - Get file version history
+router.get('/sandboxes/:sandboxId/files/:fileKey/history', testMonitorController.getSandboxFileHistory);
+
+// POST /api/test-monitor/sandboxes/:sandboxId/files/:fileKey/save - Save sandbox file
+router.post('/sandboxes/:sandboxId/files/:fileKey/save', testMonitorController.saveSandboxFile);
+
+// POST /api/test-monitor/sandboxes/:sandboxId/files/:fileKey/copy - Copy from production
+router.post('/sandboxes/:sandboxId/files/:fileKey/copy', testMonitorController.copySandboxFileFromProduction);
+
+// POST /api/test-monitor/sandboxes/:sandboxId/files/:fileKey/rollback - Rollback to version
+router.post('/sandboxes/:sandboxId/files/:fileKey/rollback', testMonitorController.rollbackSandboxFile);
+
+// POST /api/test-monitor/sandboxes/:sandboxId/reset - Reset sandbox to production
+router.post('/sandboxes/:sandboxId/reset', testMonitorController.resetSandbox);
+
+// POST /api/test-monitor/sandboxes/:sandboxId/copy-all - Copy all files from production
+router.post('/sandboxes/:sandboxId/copy-all', testMonitorController.copySandboxAllFromProduction);
+
 export default router;

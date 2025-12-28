@@ -21,6 +21,8 @@ import {
   TestCasesPage,
   GoalTestsDashboard,
   CreateGoalTestPage,
+  ABTestingDashboard,
+  ABTestingSandbox,
 } from '../pages/TestMonitor';
 import { NotFound } from '../pages/NotFound';
 import { ROUTES } from '../utils/constants';
@@ -53,6 +55,8 @@ export function AppRouter() {
             <Route path="create" element={<CreateGoalTestPage />} />
             <Route path="history" element={<TestRunHistory />} />
             <Route path="tuning" element={<AgentTuning />} />
+            <Route path="ab-testing" element={<ABTestingDashboard />} />
+            <Route path="sandbox" element={<ABTestingSandbox />} />
             <Route path="run/:runId" element={<TestRunDetail />} />
           </Route>
 

@@ -14,6 +14,8 @@ const tabs = [
   { name: 'Create Test', path: ROUTES.TEST_MONITOR_CREATE },
   { name: 'History', path: ROUTES.TEST_MONITOR_HISTORY },
   { name: 'Tuning', path: ROUTES.TEST_MONITOR_TUNING },
+  { name: 'Sandbox', path: ROUTES.TEST_MONITOR_SANDBOX },
+  { name: 'A/B Testing', path: ROUTES.TEST_MONITOR_AB_TESTING },
 ];
 
 export function TestMonitorLayout() {
@@ -70,3 +72,5 @@ export { TestCasesPage } from './TestCasesPage';
 export { GoalTestCasesPage } from './GoalTestCasesPage';
 export { GoalTestsDashboard } from './GoalTestsDashboard';
 export { CreateGoalTestPage } from './CreateGoalTestPage';
+export { ABTestingDashboard } from './ABTestingDashboard';
+export { ABTestingSandbox } from './ABTestingSandbox';

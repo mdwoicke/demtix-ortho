@@ -12,6 +12,7 @@ import * as testCaseService from '../services/testCaseService';
 import * as goalTestService from '../services/goalTestService';
 import { goalSuggestionService } from '../services/goalSuggestionService';
 import { goalAnalysisService } from '../services/goalAnalysisService';
+import * as comparisonService from '../services/comparisonService';
 
 // Path to test-agent database
 const TEST_AGENT_DB_PATH = path.resolve(__dirname, '../../../test-agent/data/test-results.db');
@@ -24,6 +25,97 @@ const activeConnections: Map<string, Set<Response>> = new Map();
  */
 function getTestAgentDb(): BetterSqlite3.Database {
   return new BetterSqlite3(TEST_AGENT_DB_PATH, { readonly: true });
+}
+
+/**
+ * Get database connection (read-write) for sandbox operations
+ */
+function getTestAgentDbWritable(): BetterSqlite3.Database {
+  const db = new BetterSqlite3(TEST_AGENT_DB_PATH);
+
+  // Ensure sandbox tables exist
+  db.exec(`
+    -- Sandboxes: Persistent A and B sandbox configurations
+    CREATE TABLE IF NOT EXISTS ab_sandboxes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sandbox_id TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      flowise_endpoint TEXT,
+      flowise_api_key TEXT,
+      langfuse_host TEXT,
+      langfuse_public_key TEXT,
+      langfuse_secret_key TEXT,
+      is_active INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+
+    -- Sandbox Files: Copy of each of the 3 files per sandbox
+    CREATE TABLE IF NOT EXISTS ab_sandbox_files (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sandbox_id TEXT NOT NULL,
+      file_key TEXT NOT NULL,
+      file_type TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      content TEXT NOT NULL,
+      version INTEGER DEFAULT 1,
+      base_version INTEGER,
+      change_description TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(sandbox_id, file_key),
+      FOREIGN KEY (sandbox_id) REFERENCES ab_sandboxes(sandbox_id)
+    );
+
+    -- Sandbox File History: Version history for sandbox file edits
+    CREATE TABLE IF NOT EXISTS ab_sandbox_file_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sandbox_id TEXT NOT NULL,
+      file_key TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      change_description TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (sandbox_id) REFERENCES ab_sandboxes(sandbox_id)
+    );
+
+    -- Sandbox Comparison Runs: Track three-way comparison test runs
+    CREATE TABLE IF NOT EXISTS ab_sandbox_comparison_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      comparison_id TEXT UNIQUE NOT NULL,
+      name TEXT,
+      status TEXT CHECK(status IN ('pending', 'running', 'completed', 'failed')) DEFAULT 'pending',
+      test_ids_json TEXT,
+      production_results_json TEXT,
+      sandbox_a_results_json TEXT,
+      sandbox_b_results_json TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      summary_json TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Indexes for sandbox tables
+    CREATE INDEX IF NOT EXISTS idx_sandbox_files_sandbox ON ab_sandbox_files(sandbox_id);
+    CREATE INDEX IF NOT EXISTS idx_sandbox_history_sandbox ON ab_sandbox_file_history(sandbox_id);
+    CREATE INDEX IF NOT EXISTS idx_sandbox_history_file ON ab_sandbox_file_history(file_key);
+    CREATE INDEX IF NOT EXISTS idx_comparison_runs_status ON ab_sandbox_comparison_runs(status);
+  `);
+
+  // Add langfuse columns if they don't exist (for existing tables)
+  // SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we catch errors
+  const columnsToAdd = ['langfuse_host', 'langfuse_public_key', 'langfuse_secret_key'];
+  for (const col of columnsToAdd) {
+    try {
+      db.exec(`ALTER TABLE ab_sandboxes ADD COLUMN ${col} TEXT`);
+    } catch {
+      // Column already exists, ignore
+    }
+  }
+
+  return db;
 }
 
 /**
@@ -181,7 +273,7 @@ export async function getTestRun(req: Request, res: Response, next: NextFunction
   try {
     const { runId } = req.params;
 
-    const db = getTestAgentDb();
+    const db = getTestAgentDbWritable();
 
     // Get the run
     const runRow = db.prepare(`
@@ -245,7 +337,7 @@ export async function getTranscript(req: Request, res: Response, next: NextFunct
     const { testId } = req.params;
     const runId = req.query.runId as string;
 
-    const db = getTestAgentDb();
+    const db = getTestAgentDbWritable();
 
     let query = 'SELECT transcript_json FROM transcripts WHERE test_id = ?';
     const params: any[] = [testId];
@@ -281,7 +373,7 @@ export async function getApiCalls(req: Request, res: Response, next: NextFunctio
     const { testId } = req.params;
     const runId = req.query.runId as string;
 
-    const db = getTestAgentDb();
+    const db = getTestAgentDbWritable();
 
     let query = `
       SELECT id, run_id, test_id, step_id, tool_name, request_payload, response_payload, status, duration_ms, timestamp
@@ -327,7 +419,7 @@ export async function getFindings(req: Request, res: Response, next: NextFunctio
   try {
     const runId = req.query.runId as string;
 
-    const db = getTestAgentDb();
+    const db = getTestAgentDbWritable();
 
     let query = `
       SELECT id, run_id, test_id, type, severity, title, description,
@@ -377,7 +469,7 @@ export async function getRecommendations(req: Request, res: Response, next: Next
   try {
     const runId = req.query.runId as string;
 
-    const db = getTestAgentDb();
+    const db = getTestAgentDbWritable();
 
     let query = `
       SELECT rec_id, run_id, type, priority, title, problem, solution,
@@ -427,7 +519,7 @@ export async function getFixes(req: Request, res: Response, next: NextFunction):
     const status = req.query.status as string;
     const type = req.query.type as string;
 
-    const db = getTestAgentDb();
+    const db = getTestAgentDbWritable();
 
     let query = `
       SELECT id, fix_id, run_id, type, target_file, change_description, change_code,
@@ -490,7 +582,7 @@ export async function getFixesForRun(req: Request, res: Response, next: NextFunc
   try {
     const { runId } = req.params;
 
-    const db = getTestAgentDb();
+    const db = getTestAgentDbWritable();
 
     const rows = db.prepare(`
       SELECT id, fix_id, run_id, type, target_file, change_description, change_code,
@@ -590,7 +682,7 @@ export async function verifyFixes(req: Request, res: Response, next: NextFunctio
       return;
     }
 
-    const db = getTestAgentDb();
+    const db = getTestAgentDbWritable();
 
     // Get fixes and their affected tests
     const placeholders = fixIds.map(() => '?').join(',');
@@ -726,7 +818,7 @@ export async function streamTestRun(req: Request, res: Response, _next: NextFunc
   // Polling function
   const pollInterval = setInterval(() => {
     try {
-      const db = getTestAgentDb();
+      const db = getTestAgentDbWritable();
       const currentState = getFullRunData(db, runId);
 
       if (!currentState) {
@@ -796,7 +888,7 @@ export async function streamTestRun(req: Request, res: Response, _next: NextFunc
 
   // Send initial data immediately
   try {
-    const db = getTestAgentDb();
+    const db = getTestAgentDbWritable();
     const initialState = getFullRunData(db, runId);
 
     if (initialState) {
@@ -1895,7 +1987,7 @@ export async function runDiagnosis(req: Request, res: Response, next: NextFuncti
 
   try {
     // Verify run exists
-    const db = getTestAgentDb();
+    const db = getTestAgentDbWritable();
     const runRow = db.prepare(`
       SELECT run_id, status, failed FROM test_runs WHERE run_id = ?
     `).get(runId) as any;
@@ -2782,5 +2874,1378 @@ export async function analyzeGoalDescription(req: Request, res: Response, next: 
     }
   } catch (error) {
     next(error);
+  }
+}
+
+// ============================================================================
+// A/B TESTING CONTROLLERS
+// ============================================================================
+
+/**
+ * Get all A/B experiments
+ */
+export async function getABExperiments(req: Request, res: Response, next: NextFunction): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+  try {
+    db = getTestAgentDbWritable();
+
+    const { status, limit = 50 } = req.query;
+
+    let query = `
+      SELECT experiment_id, name, description, hypothesis, status, experiment_type,
+             variants_json, test_ids_json, traffic_split_json,
+             min_sample_size, max_sample_size, significance_threshold,
+             created_at, started_at, completed_at, winning_variant_id, conclusion
+      FROM ab_experiments
+    `;
+
+    const params: any[] = [];
+    if (status) {
+      query += ' WHERE status = ?';
+      params.push(status);
+    }
+
+    query += ' ORDER BY created_at DESC LIMIT ?';
+    params.push(Number(limit));
+
+    const rows = db.prepare(query).all(...params) as any[];
+
+    const experiments = rows.map(row => ({
+      experimentId: row.experiment_id,
+      name: row.name,
+      description: row.description,
+      hypothesis: row.hypothesis,
+      status: row.status,
+      experimentType: row.experiment_type,
+      variants: row.variants_json ? JSON.parse(row.variants_json) : [],
+      testIds: row.test_ids_json ? JSON.parse(row.test_ids_json) : [],
+      trafficSplit: row.traffic_split_json ? JSON.parse(row.traffic_split_json) : {},
+      minSampleSize: row.min_sample_size,
+      maxSampleSize: row.max_sample_size,
+      significanceThreshold: row.significance_threshold,
+      createdAt: row.created_at,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      winningVariantId: row.winning_variant_id,
+      conclusion: row.conclusion,
+    }));
+
+    res.json({
+      success: true,
+      data: experiments,
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Get single A/B experiment with statistics
+ */
+export async function getABExperiment(req: Request, res: Response, next: NextFunction): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+  try {
+    db = getTestAgentDbWritable();
+    const { experimentId } = req.params;
+
+    // Get experiment
+    const row = db.prepare(`
+      SELECT experiment_id, name, description, hypothesis, status, experiment_type,
+             variants_json, test_ids_json, traffic_split_json,
+             min_sample_size, max_sample_size, significance_threshold,
+             created_at, started_at, completed_at, winning_variant_id, conclusion
+      FROM ab_experiments
+      WHERE experiment_id = ?
+    `).get(experimentId) as any;
+
+    if (!row) {
+      res.status(404).json({ success: false, error: 'Experiment not found' });
+      return;
+    }
+
+    const experiment = {
+      experimentId: row.experiment_id,
+      name: row.name,
+      description: row.description,
+      hypothesis: row.hypothesis,
+      status: row.status,
+      experimentType: row.experiment_type,
+      variants: row.variants_json ? JSON.parse(row.variants_json) : [],
+      testIds: row.test_ids_json ? JSON.parse(row.test_ids_json) : [],
+      trafficSplit: row.traffic_split_json ? JSON.parse(row.traffic_split_json) : {},
+      minSampleSize: row.min_sample_size,
+      maxSampleSize: row.max_sample_size,
+      significanceThreshold: row.significance_threshold,
+      createdAt: row.created_at,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      winningVariantId: row.winning_variant_id,
+      conclusion: row.conclusion,
+    };
+
+    // Get run counts per variant
+    const runCounts = db.prepare(`
+      SELECT variant_id, variant_role,
+             COUNT(*) as total,
+             SUM(CASE WHEN passed = 1 THEN 1 ELSE 0 END) as passed,
+             AVG(turn_count) as avg_turns,
+             AVG(duration_ms) as avg_duration,
+             AVG(goal_completion_rate) as avg_goal_rate
+      FROM ab_experiment_runs
+      WHERE experiment_id = ?
+      GROUP BY variant_id, variant_role
+    `).all(experimentId) as any[];
+
+    const variantStats = runCounts.map(rc => ({
+      variantId: rc.variant_id,
+      variantRole: rc.variant_role,
+      totalRuns: rc.total,
+      passedRuns: rc.passed,
+      passRate: rc.total > 0 ? (rc.passed / rc.total) * 100 : 0,
+      avgTurns: rc.avg_turns || 0,
+      avgDurationMs: rc.avg_duration || 0,
+      avgGoalCompletionRate: rc.avg_goal_rate || 0,
+    }));
+
+    // Calculate statistics
+    const controlStats = variantStats.find(v => v.variantRole === 'control');
+    const treatmentStats = variantStats.find(v => v.variantRole === 'treatment');
+
+    let analysis: any = null;
+    if (controlStats && treatmentStats && controlStats.totalRuns > 0 && treatmentStats.totalRuns > 0) {
+      const controlPassRate = controlStats.passRate;
+      const treatmentPassRate = treatmentStats.passRate;
+      const lift = treatmentPassRate - controlPassRate;
+
+      // Simple chi-square approximation for p-value
+      const n1 = controlStats.totalRuns;
+      const n2 = treatmentStats.totalRuns;
+      const p1 = controlStats.passedRuns / n1;
+      const p2 = treatmentStats.passedRuns / n2;
+      const pooledP = (controlStats.passedRuns + treatmentStats.passedRuns) / (n1 + n2);
+      const se = Math.sqrt(pooledP * (1 - pooledP) * (1/n1 + 1/n2));
+      const z = se > 0 ? Math.abs(p1 - p2) / se : 0;
+
+      // Two-tailed p-value approximation
+      const pValue = z > 0 ? 2 * (1 - normalCDF(z)) : 1;
+
+      analysis = {
+        controlPassRate,
+        treatmentPassRate,
+        lift,
+        liftPercent: controlPassRate > 0 ? (lift / controlPassRate) * 100 : 0,
+        pValue,
+        isSignificant: pValue < (experiment.significanceThreshold || 0.05),
+        confidenceLevel: (1 - pValue) * 100,
+        controlSamples: n1,
+        treatmentSamples: n2,
+        minSampleSize: experiment.minSampleSize,
+        hasEnoughSamples: n1 >= experiment.minSampleSize && n2 >= experiment.minSampleSize,
+      };
+    }
+
+    res.json({
+      success: true,
+      data: {
+        experiment,
+        variantStats,
+        analysis,
+      },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Get runs for an experiment
+ */
+export async function getABExperimentRuns(req: Request, res: Response, next: NextFunction): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+  try {
+    db = getTestAgentDbWritable();
+    const { experimentId } = req.params;
+    const { limit = 100 } = req.query;
+
+    const rows = db.prepare(`
+      SELECT id, experiment_id, run_id, test_id, variant_id, variant_role,
+             started_at, completed_at, passed, turn_count, duration_ms,
+             goal_completion_rate, constraint_violations, error_occurred, metrics_json
+      FROM ab_experiment_runs
+      WHERE experiment_id = ?
+      ORDER BY started_at DESC
+      LIMIT ?
+    `).all(experimentId, Number(limit)) as any[];
+
+    const runs = rows.map(row => ({
+      id: row.id,
+      experimentId: row.experiment_id,
+      runId: row.run_id,
+      testId: row.test_id,
+      variantId: row.variant_id,
+      variantRole: row.variant_role,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      passed: row.passed === 1,
+      turnCount: row.turn_count,
+      durationMs: row.duration_ms,
+      goalCompletionRate: row.goal_completion_rate,
+      constraintViolations: row.constraint_violations,
+      errorOccurred: row.error_occurred === 1,
+      metrics: row.metrics_json ? JSON.parse(row.metrics_json) : null,
+    }));
+
+    res.json({
+      success: true,
+      data: runs,
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Get all variants
+ */
+export async function getABVariants(req: Request, res: Response, next: NextFunction): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+  try {
+    db = getTestAgentDbWritable();
+    const { variantType, isBaseline } = req.query;
+
+    let query = `
+      SELECT variant_id, variant_type, target_file, name, description,
+             content_hash, baseline_variant_id, source_fix_id,
+             is_baseline, created_at, created_by, metadata_json
+      FROM ab_variants
+      WHERE 1=1
+    `;
+
+    const params: any[] = [];
+    if (variantType) {
+      query += ' AND variant_type = ?';
+      params.push(variantType);
+    }
+    if (isBaseline !== undefined) {
+      query += ' AND is_baseline = ?';
+      params.push(isBaseline === 'true' ? 1 : 0);
+    }
+
+    query += ' ORDER BY created_at DESC';
+
+    const rows = db.prepare(query).all(...params) as any[];
+
+    const variants = rows.map(row => ({
+      variantId: row.variant_id,
+      variantType: row.variant_type,
+      targetFile: row.target_file,
+      name: row.name,
+      description: row.description,
+      contentHash: row.content_hash,
+      baselineVariantId: row.baseline_variant_id,
+      sourceFixId: row.source_fix_id,
+      isBaseline: row.is_baseline === 1,
+      createdAt: row.created_at,
+      createdBy: row.created_by,
+      metadata: row.metadata_json ? JSON.parse(row.metadata_json) : null,
+    }));
+
+    res.json({
+      success: true,
+      data: variants,
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Get A/B testing statistics summary
+ */
+export async function getABStats(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+  try {
+    db = getTestAgentDbWritable();
+
+    // Count experiments by status
+    const experimentCounts = db.prepare(`
+      SELECT status, COUNT(*) as count
+      FROM ab_experiments
+      GROUP BY status
+    `).all() as any[];
+
+    // Count total variants
+    const variantCount = db.prepare(`
+      SELECT COUNT(*) as count FROM ab_variants
+    `).get() as any;
+
+    // Count total runs
+    const runCount = db.prepare(`
+      SELECT COUNT(*) as count FROM ab_experiment_runs
+    `).get() as any;
+
+    // Get recent experiments
+    const recentExperiments = db.prepare(`
+      SELECT experiment_id, name, status, created_at
+      FROM ab_experiments
+      ORDER BY created_at DESC
+      LIMIT 5
+    `).all() as any[];
+
+    const statusCounts: Record<string, number> = {};
+    experimentCounts.forEach(row => {
+      statusCounts[row.status] = row.count;
+    });
+
+    res.json({
+      success: true,
+      data: {
+        experiments: {
+          total: Object.values(statusCounts).reduce((a, b) => a + b, 0),
+          byStatus: statusCounts,
+        },
+        variants: variantCount?.count || 0,
+        runs: runCount?.count || 0,
+        recentExperiments: recentExperiments.map(row => ({
+          experimentId: row.experiment_id,
+          name: row.name,
+          status: row.status,
+          createdAt: row.created_at,
+        })),
+      },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Standard normal CDF approximation for p-value calculation
+ */
+function normalCDF(x: number): number {
+  const a1 = 0.254829592;
+  const a2 = -0.284496736;
+  const a3 = 1.421413741;
+  const a4 = -1.453152027;
+  const a5 = 1.061405429;
+  const p = 0.3275911;
+
+  const sign = x < 0 ? -1 : 1;
+  x = Math.abs(x) / Math.sqrt(2);
+
+  const t = 1.0 / (1.0 + p * x);
+  const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+
+  return 0.5 * (1.0 + sign * y);
+}
+
+// ============================================================================
+// SANDBOX CONTROLLER FUNCTIONS
+// ============================================================================
+
+/**
+ * Get all sandboxes
+ */
+export async function getSandboxes(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    db = getTestAgentDbWritable();
+
+    // Initialize sandboxes if not exist
+    const now = new Date().toISOString();
+    const existingA = db.prepare('SELECT 1 FROM ab_sandboxes WHERE sandbox_id = ?').get('sandbox_a');
+    const existingB = db.prepare('SELECT 1 FROM ab_sandboxes WHERE sandbox_id = ?').get('sandbox_b');
+
+    if (!existingA) {
+      db.prepare(`
+        INSERT INTO ab_sandboxes (sandbox_id, name, description, is_active, created_at, updated_at)
+        VALUES (?, ?, ?, 1, ?, ?)
+      `).run('sandbox_a', 'Sandbox A', 'First sandbox for A/B testing', now, now);
+    }
+
+    if (!existingB) {
+      db.prepare(`
+        INSERT INTO ab_sandboxes (sandbox_id, name, description, is_active, created_at, updated_at)
+        VALUES (?, ?, ?, 1, ?, ?)
+      `).run('sandbox_b', 'Sandbox B', 'Second sandbox for A/B testing', now, now);
+    }
+
+    const sandboxes = db.prepare(`
+      SELECT id, sandbox_id, name, description, flowise_endpoint, flowise_api_key,
+             langfuse_host, langfuse_public_key, langfuse_secret_key,
+             is_active, created_at, updated_at
+      FROM ab_sandboxes
+      ORDER BY sandbox_id
+    `).all() as any[];
+
+    // Get file counts for each sandbox
+    const sandboxesWithFiles = sandboxes.map(sandbox => {
+      const files = db!.prepare(`
+        SELECT file_key, version, updated_at
+        FROM ab_sandbox_files
+        WHERE sandbox_id = ?
+      `).all(sandbox.sandbox_id) as any[];
+
+      return {
+        sandboxId: sandbox.sandbox_id,
+        name: sandbox.name,
+        description: sandbox.description,
+        flowiseEndpoint: sandbox.flowise_endpoint,
+        flowiseApiKey: sandbox.flowise_api_key,
+        langfuseHost: sandbox.langfuse_host,
+        langfusePublicKey: sandbox.langfuse_public_key,
+        langfuseSecretKey: sandbox.langfuse_secret_key,
+        isActive: sandbox.is_active === 1,
+        createdAt: sandbox.created_at,
+        updatedAt: sandbox.updated_at,
+        fileCount: files.length,
+        files: files.map(f => ({
+          fileKey: f.file_key,
+          version: f.version,
+          updatedAt: f.updated_at,
+        })),
+      };
+    });
+
+    res.json({
+      success: true,
+      data: sandboxesWithFiles,
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Get a single sandbox with details
+ */
+export async function getSandbox(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { sandboxId } = req.params;
+    db = getTestAgentDbWritable();
+
+    const sandbox = db.prepare(`
+      SELECT id, sandbox_id, name, description, flowise_endpoint, flowise_api_key,
+             langfuse_host, langfuse_public_key, langfuse_secret_key,
+             is_active, created_at, updated_at
+      FROM ab_sandboxes
+      WHERE sandbox_id = ?
+    `).get(sandboxId) as any;
+
+    if (!sandbox) {
+      res.status(404).json({
+        success: false,
+        error: `Sandbox not found: ${sandboxId}`,
+      });
+      return;
+    }
+
+    const files = db.prepare(`
+      SELECT id, sandbox_id, file_key, file_type, display_name, content, version, base_version, change_description, created_at, updated_at
+      FROM ab_sandbox_files
+      WHERE sandbox_id = ?
+      ORDER BY file_key
+    `).all(sandboxId) as any[];
+
+    res.json({
+      success: true,
+      data: {
+        sandboxId: sandbox.sandbox_id,
+        name: sandbox.name,
+        description: sandbox.description,
+        flowiseEndpoint: sandbox.flowise_endpoint,
+        flowiseApiKey: sandbox.flowise_api_key,
+        langfuseHost: sandbox.langfuse_host,
+        langfusePublicKey: sandbox.langfuse_public_key,
+        langfuseSecretKey: sandbox.langfuse_secret_key,
+        isActive: sandbox.is_active === 1,
+        createdAt: sandbox.created_at,
+        updatedAt: sandbox.updated_at,
+        files: files.map(f => ({
+          fileKey: f.file_key,
+          fileType: f.file_type,
+          displayName: f.display_name,
+          version: f.version,
+          baseVersion: f.base_version,
+          changeDescription: f.change_description,
+          createdAt: f.created_at,
+          updatedAt: f.updated_at,
+        })),
+      },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Update sandbox configuration
+ */
+export async function updateSandbox(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { sandboxId } = req.params;
+    const { name, description, flowiseEndpoint, flowiseApiKey, langfuseHost, langfusePublicKey, langfuseSecretKey, isActive } = req.body;
+    db = getTestAgentDbWritable();
+
+    const now = new Date().toISOString();
+
+    const setClauses: string[] = ['updated_at = ?'];
+    const params: any[] = [now];
+
+    if (name !== undefined) {
+      setClauses.push('name = ?');
+      params.push(name);
+    }
+    if (description !== undefined) {
+      setClauses.push('description = ?');
+      params.push(description);
+    }
+    if (flowiseEndpoint !== undefined) {
+      setClauses.push('flowise_endpoint = ?');
+      params.push(flowiseEndpoint);
+    }
+    if (flowiseApiKey !== undefined) {
+      setClauses.push('flowise_api_key = ?');
+      params.push(flowiseApiKey);
+    }
+    if (langfuseHost !== undefined) {
+      setClauses.push('langfuse_host = ?');
+      params.push(langfuseHost);
+    }
+    if (langfusePublicKey !== undefined) {
+      setClauses.push('langfuse_public_key = ?');
+      params.push(langfusePublicKey);
+    }
+    if (langfuseSecretKey !== undefined) {
+      setClauses.push('langfuse_secret_key = ?');
+      params.push(langfuseSecretKey);
+    }
+    if (isActive !== undefined) {
+      setClauses.push('is_active = ?');
+      params.push(isActive ? 1 : 0);
+    }
+
+    params.push(sandboxId);
+
+    const result = db.prepare(`
+      UPDATE ab_sandboxes SET ${setClauses.join(', ')} WHERE sandbox_id = ?
+    `).run(...params);
+
+    if (result.changes === 0) {
+      res.status(404).json({
+        success: false,
+        error: `Sandbox not found: ${sandboxId}`,
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      message: `Sandbox ${sandboxId} updated successfully`,
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Test LangFuse connection with provided credentials
+ */
+export async function testLangfuseConnection(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { host, publicKey, secretKey } = req.body;
+
+    if (!host || !publicKey || !secretKey) {
+      res.status(400).json({
+        success: false,
+        error: 'Missing required fields: host, publicKey, secretKey',
+      });
+      return;
+    }
+
+    // Normalize host URL (remove trailing slash)
+    const normalizedHost = host.replace(/\/$/, '');
+
+    // Create Basic Auth header (base64 encoded publicKey:secretKey)
+    const authString = Buffer.from(`${publicKey}:${secretKey}`).toString('base64');
+
+    // Test connection by fetching traces with limit 1
+    const startTime = Date.now();
+    const response = await fetch(`${normalizedHost}/api/public/traces?limit=1`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Basic ${authString}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const responseTimeMs = Date.now() - startTime;
+
+    if (response.ok) {
+      res.json({
+        success: true,
+        data: {
+          success: true,
+          message: 'LangFuse connection successful',
+          responseTimeMs,
+        },
+      });
+    } else {
+      const errorText = await response.text();
+      res.json({
+        success: true,
+        data: {
+          success: false,
+          message: `LangFuse returned ${response.status}: ${errorText.substring(0, 200)}`,
+          responseTimeMs,
+        },
+      });
+    }
+  } catch (error: any) {
+    res.json({
+      success: true,
+      data: {
+        success: false,
+        message: `Connection failed: ${error.message}`,
+      },
+    });
+  }
+}
+
+/**
+ * Get all files for a sandbox
+ */
+export async function getSandboxFiles(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { sandboxId } = req.params;
+    db = getTestAgentDbWritable();
+
+    const files = db.prepare(`
+      SELECT id, sandbox_id, file_key, file_type, display_name, content, version, base_version, change_description, created_at, updated_at
+      FROM ab_sandbox_files
+      WHERE sandbox_id = ?
+      ORDER BY file_key
+    `).all(sandboxId) as any[];
+
+    res.json({
+      success: true,
+      data: files.map(f => ({
+        fileKey: f.file_key,
+        fileType: f.file_type,
+        displayName: f.display_name,
+        content: f.content,
+        version: f.version,
+        baseVersion: f.base_version,
+        changeDescription: f.change_description,
+        createdAt: f.created_at,
+        updatedAt: f.updated_at,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Get a specific sandbox file
+ */
+export async function getSandboxFile(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { sandboxId, fileKey } = req.params;
+    db = getTestAgentDbWritable();
+
+    const file = db.prepare(`
+      SELECT id, sandbox_id, file_key, file_type, display_name, content, version, base_version, change_description, created_at, updated_at
+      FROM ab_sandbox_files
+      WHERE sandbox_id = ? AND file_key = ?
+    `).get(sandboxId, fileKey) as any;
+
+    if (!file) {
+      res.status(404).json({
+        success: false,
+        error: `File not found: ${fileKey} in sandbox ${sandboxId}`,
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        fileKey: file.file_key,
+        fileType: file.file_type,
+        displayName: file.display_name,
+        content: file.content,
+        version: file.version,
+        baseVersion: file.base_version,
+        changeDescription: file.change_description,
+        createdAt: file.created_at,
+        updatedAt: file.updated_at,
+      },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Get sandbox file version history
+ */
+export async function getSandboxFileHistory(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { sandboxId, fileKey } = req.params;
+    const limit = parseInt(req.query.limit as string) || 20;
+    db = getTestAgentDbWritable();
+
+    const history = db.prepare(`
+      SELECT id, sandbox_id, file_key, version, content, change_description, created_at
+      FROM ab_sandbox_file_history
+      WHERE sandbox_id = ? AND file_key = ?
+      ORDER BY version DESC
+      LIMIT ?
+    `).all(sandboxId, fileKey, limit) as any[];
+
+    res.json({
+      success: true,
+      data: history.map(h => ({
+        version: h.version,
+        changeDescription: h.change_description,
+        createdAt: h.created_at,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Save sandbox file (create new version)
+ */
+export async function saveSandboxFile(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { sandboxId, fileKey } = req.params;
+    const { content, changeDescription } = req.body;
+
+    if (!content) {
+      res.status(400).json({
+        success: false,
+        error: 'Content is required',
+      });
+      return;
+    }
+
+    db = getTestAgentDbWritable();
+    const now = new Date().toISOString();
+
+    // Check if file exists
+    const existing = db.prepare(`
+      SELECT id, version, content, change_description
+      FROM ab_sandbox_files
+      WHERE sandbox_id = ? AND file_key = ?
+    `).get(sandboxId, fileKey) as any;
+
+    let newVersion: number;
+
+    if (existing) {
+      // Save current version to history
+      db.prepare(`
+        INSERT INTO ab_sandbox_file_history (sandbox_id, file_key, version, content, change_description, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(sandboxId, fileKey, existing.version, existing.content, existing.change_description, now);
+
+      // Update with new content
+      newVersion = existing.version + 1;
+      db.prepare(`
+        UPDATE ab_sandbox_files
+        SET content = ?, version = ?, change_description = ?, updated_at = ?
+        WHERE sandbox_id = ? AND file_key = ?
+      `).run(content, newVersion, changeDescription || null, now, sandboxId, fileKey);
+    } else {
+      // Insert new file
+      newVersion = 1;
+
+      // Determine file type and display name
+      const fileConfig: Record<string, { displayName: string; fileType: string }> = {
+        system_prompt: { displayName: 'System Prompt', fileType: 'markdown' },
+        patient_tool: { displayName: 'Patient Tool', fileType: 'json' },
+        scheduling_tool: { displayName: 'Scheduling Tool', fileType: 'json' },
+      };
+
+      const config = fileConfig[fileKey] || { displayName: fileKey, fileType: 'text' };
+
+      db.prepare(`
+        INSERT INTO ab_sandbox_files (sandbox_id, file_key, file_type, display_name, content, version, change_description, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(sandboxId, fileKey, config.fileType, config.displayName, content, newVersion, changeDescription || null, now, now);
+    }
+
+    res.json({
+      success: true,
+      data: {
+        newVersion,
+        message: `File ${fileKey} saved as version ${newVersion}`,
+      },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Copy file from production to sandbox
+ */
+export async function copySandboxFileFromProduction(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { sandboxId, fileKey } = req.params;
+    db = getTestAgentDbWritable();
+
+    // Get production content
+    const production = db.prepare(`
+      SELECT content, version FROM prompt_working_copies WHERE file_key = ?
+    `).get(fileKey) as any;
+
+    if (!production) {
+      res.status(404).json({
+        success: false,
+        error: `Production file not found: ${fileKey}`,
+      });
+      return;
+    }
+
+    const now = new Date().toISOString();
+
+    // Check if sandbox file exists
+    const existing = db.prepare(`
+      SELECT id, version, content, change_description
+      FROM ab_sandbox_files
+      WHERE sandbox_id = ? AND file_key = ?
+    `).get(sandboxId, fileKey) as any;
+
+    let newVersion: number;
+
+    if (existing) {
+      // Save current version to history
+      db.prepare(`
+        INSERT INTO ab_sandbox_file_history (sandbox_id, file_key, version, content, change_description, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(sandboxId, fileKey, existing.version, existing.content, existing.change_description, now);
+
+      newVersion = existing.version + 1;
+      db.prepare(`
+        UPDATE ab_sandbox_files
+        SET content = ?, version = ?, base_version = ?, change_description = ?, updated_at = ?
+        WHERE sandbox_id = ? AND file_key = ?
+      `).run(production.content, newVersion, production.version, `Copied from production v${production.version}`, now, sandboxId, fileKey);
+    } else {
+      newVersion = 1;
+
+      const fileConfig: Record<string, { displayName: string; fileType: string }> = {
+        system_prompt: { displayName: 'System Prompt', fileType: 'markdown' },
+        patient_tool: { displayName: 'Patient Tool', fileType: 'json' },
+        scheduling_tool: { displayName: 'Scheduling Tool', fileType: 'json' },
+      };
+
+      const config = fileConfig[fileKey] || { displayName: fileKey, fileType: 'text' };
+
+      db.prepare(`
+        INSERT INTO ab_sandbox_files (sandbox_id, file_key, file_type, display_name, content, version, base_version, change_description, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(sandboxId, fileKey, config.fileType, config.displayName, production.content, newVersion, production.version, `Copied from production v${production.version}`, now, now);
+    }
+
+    // Fetch the newly created/updated file to return full data
+    const file = db.prepare(`
+      SELECT id, sandbox_id, file_key, file_type, display_name, content, version, base_version, change_description, created_at, updated_at
+      FROM ab_sandbox_files
+      WHERE sandbox_id = ? AND file_key = ?
+    `).get(sandboxId, fileKey) as any;
+
+    res.json({
+      success: true,
+      data: {
+        file: {
+          fileKey: file.file_key,
+          fileType: file.file_type,
+          displayName: file.display_name,
+          content: file.content,
+          version: file.version,
+          baseVersion: file.base_version,
+          changeDescription: file.change_description,
+          createdAt: file.created_at,
+          updatedAt: file.updated_at,
+        },
+        message: `Copied ${fileKey} from production v${production.version}`,
+      },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Rollback sandbox file to a previous version
+ */
+export async function rollbackSandboxFile(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { sandboxId, fileKey } = req.params;
+    const { version } = req.body;
+
+    if (typeof version !== 'number') {
+      res.status(400).json({
+        success: false,
+        error: 'Version number is required',
+      });
+      return;
+    }
+
+    db = getTestAgentDbWritable();
+    const now = new Date().toISOString();
+
+    // Get the version from history
+    const historyRow = db.prepare(`
+      SELECT content, change_description FROM ab_sandbox_file_history
+      WHERE sandbox_id = ? AND file_key = ? AND version = ?
+    `).get(sandboxId, fileKey, version) as any;
+
+    if (!historyRow) {
+      res.status(404).json({
+        success: false,
+        error: `Version ${version} not found in history for ${fileKey}`,
+      });
+      return;
+    }
+
+    // Get current file
+    const current = db.prepare(`
+      SELECT id, version, content, change_description
+      FROM ab_sandbox_files
+      WHERE sandbox_id = ? AND file_key = ?
+    `).get(sandboxId, fileKey) as any;
+
+    if (!current) {
+      res.status(404).json({
+        success: false,
+        error: `File ${fileKey} not found in sandbox ${sandboxId}`,
+      });
+      return;
+    }
+
+    // Save current to history
+    db.prepare(`
+      INSERT INTO ab_sandbox_file_history (sandbox_id, file_key, version, content, change_description, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(sandboxId, fileKey, current.version, current.content, current.change_description, now);
+
+    // Update with rolled back content
+    const newVersion = current.version + 1;
+    db.prepare(`
+      UPDATE ab_sandbox_files
+      SET content = ?, version = ?, change_description = ?, updated_at = ?
+      WHERE sandbox_id = ? AND file_key = ?
+    `).run(historyRow.content, newVersion, `Rolled back to version ${version}`, now, sandboxId, fileKey);
+
+    res.json({
+      success: true,
+      data: {
+        newVersion,
+        rolledBackToVersion: version,
+        message: `Rolled back ${fileKey} to version ${version}`,
+      },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Reset sandbox to production state
+ */
+export async function resetSandbox(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { sandboxId } = req.params;
+    db = getTestAgentDbWritable();
+
+    // Clear all sandbox files and history
+    db.prepare('DELETE FROM ab_sandbox_file_history WHERE sandbox_id = ?').run(sandboxId);
+    db.prepare('DELETE FROM ab_sandbox_files WHERE sandbox_id = ?').run(sandboxId);
+
+    res.json({
+      success: true,
+      message: `Sandbox ${sandboxId} reset to empty state. Use copy-all to populate from production.`,
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Copy all files from production to sandbox
+ */
+export async function copySandboxAllFromProduction(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { sandboxId } = req.params;
+    db = getTestAgentDbWritable();
+
+    const fileKeys = ['system_prompt', 'patient_tool', 'scheduling_tool'];
+    const results: any[] = [];
+    const now = new Date().toISOString();
+
+    for (const fileKey of fileKeys) {
+      // Get production content
+      const production = db.prepare(`
+        SELECT content, version FROM prompt_working_copies WHERE file_key = ?
+      `).get(fileKey) as any;
+
+      if (!production) {
+        results.push({ fileKey, success: false, error: 'Production file not found' });
+        continue;
+      }
+
+      // Check if sandbox file exists
+      const existing = db.prepare(`
+        SELECT id, version, content, change_description
+        FROM ab_sandbox_files
+        WHERE sandbox_id = ? AND file_key = ?
+      `).get(sandboxId, fileKey) as any;
+
+      let newVersion: number;
+
+      if (existing) {
+        // Save current version to history
+        db.prepare(`
+          INSERT INTO ab_sandbox_file_history (sandbox_id, file_key, version, content, change_description, created_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(sandboxId, fileKey, existing.version, existing.content, existing.change_description, now);
+
+        newVersion = existing.version + 1;
+        db.prepare(`
+          UPDATE ab_sandbox_files
+          SET content = ?, version = ?, base_version = ?, change_description = ?, updated_at = ?
+          WHERE sandbox_id = ? AND file_key = ?
+        `).run(production.content, newVersion, production.version, `Copied from production v${production.version}`, now, sandboxId, fileKey);
+      } else {
+        newVersion = 1;
+
+        const fileConfig: Record<string, { displayName: string; fileType: string }> = {
+          system_prompt: { displayName: 'System Prompt', fileType: 'markdown' },
+          patient_tool: { displayName: 'Patient Tool', fileType: 'json' },
+          scheduling_tool: { displayName: 'Scheduling Tool', fileType: 'json' },
+        };
+
+        const config = fileConfig[fileKey] || { displayName: fileKey, fileType: 'text' };
+
+        db.prepare(`
+          INSERT INTO ab_sandbox_files (sandbox_id, file_key, file_type, display_name, content, version, base_version, change_description, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(sandboxId, fileKey, config.fileType, config.displayName, production.content, newVersion, production.version, `Copied from production v${production.version}`, now, now);
+      }
+
+      results.push({
+        fileKey,
+        success: true,
+        newVersion,
+        baseVersion: production.version,
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        results,
+        message: `Copied ${results.filter(r => r.success).length} files from production`,
+      },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Get available tests for comparison
+ */
+export async function getComparisonTests(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    db = getTestAgentDbWritable();
+
+    // Get tests from goal_test_cases table
+    const dbTests = db.prepare(`
+      SELECT case_id, name, category, description
+      FROM goal_test_cases
+      WHERE is_archived = 0
+      ORDER BY case_id
+    `).all() as any[];
+
+    // Also include built-in tests
+    const builtInTests = [
+      { caseId: 'GOAL-HAPPY-001', name: 'Happy Path - Simple Booking', category: 'happy-path' },
+      { caseId: 'GOAL-HAPPY-002', name: 'Happy Path - Booking with Child', category: 'happy-path' },
+      { caseId: 'GOAL-HAPPY-003', name: 'Happy Path - Cancel Appointment', category: 'happy-path' },
+    ];
+
+    const allTests = [
+      ...builtInTests.map(t => ({
+        id: t.caseId,
+        name: t.name,
+        category: t.category,
+        source: 'built-in',
+      })),
+      ...dbTests.map(t => ({
+        id: t.case_id,
+        name: t.name,
+        category: t.category,
+        source: 'database',
+      })),
+    ];
+
+    res.json({
+      success: true,
+      data: allTests,
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Start a comparison run (async - returns immediately, runs in background)
+ */
+export async function startComparison(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { testIds, runProduction, runSandboxA, runSandboxB, name } = req.body;
+
+    if (!testIds || !Array.isArray(testIds) || testIds.length === 0) {
+      res.status(400).json({
+        success: false,
+        error: 'testIds array is required',
+      });
+      return;
+    }
+
+    // Start the comparison asynchronously using the new method
+    // This returns immediately with a comparisonId, and runs tests in the background
+    const { comparisonId } = await comparisonService.startComparisonAsync({
+      testIds,
+      runProduction: runProduction !== false, // Default to true
+      runSandboxA: runSandboxA !== false,     // Default to true
+      runSandboxB: runSandboxB !== false,     // Default to true
+      name,
+    });
+
+    // Return immediately with the comparison ID
+    // Frontend should poll GET /comparison/:comparisonId for status updates
+    res.json({
+      success: true,
+      data: {
+        comparisonId,
+        status: 'running',
+        message: 'Comparison started. Poll GET /comparison/:comparisonId for updates.',
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Get comparison run results
+ */
+export async function getComparisonRun(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { comparisonId } = req.params;
+    db = getTestAgentDbWritable();
+
+    const run = db.prepare(`
+      SELECT id, comparison_id, name, status, test_ids_json, production_results_json, sandbox_a_results_json, sandbox_b_results_json, started_at, completed_at, summary_json, created_at
+      FROM ab_sandbox_comparison_runs
+      WHERE comparison_id = ?
+    `).get(comparisonId) as any;
+
+    if (!run) {
+      res.status(404).json({
+        success: false,
+        error: `Comparison run not found: ${comparisonId}`,
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        comparisonId: run.comparison_id,
+        name: run.name,
+        status: run.status,
+        testIds: run.test_ids_json ? JSON.parse(run.test_ids_json) : [],
+        productionResults: run.production_results_json ? JSON.parse(run.production_results_json) : null,
+        sandboxAResults: run.sandbox_a_results_json ? JSON.parse(run.sandbox_a_results_json) : null,
+        sandboxBResults: run.sandbox_b_results_json ? JSON.parse(run.sandbox_b_results_json) : null,
+        summary: run.summary_json ? JSON.parse(run.summary_json) : null,
+        startedAt: run.started_at,
+        completedAt: run.completed_at,
+        createdAt: run.created_at,
+      },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Get comparison run history
+ */
+export async function getComparisonHistory(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const limit = parseInt(req.query.limit as string) || 20;
+    db = getTestAgentDbWritable();
+
+    const runs = db.prepare(`
+      SELECT comparison_id, name, status, test_ids_json, started_at, completed_at, summary_json, created_at
+      FROM ab_sandbox_comparison_runs
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(limit) as any[];
+
+    res.json({
+      success: true,
+      data: runs.map(run => ({
+        comparisonId: run.comparison_id,
+        name: run.name,
+        status: run.status,
+        testCount: run.test_ids_json ? JSON.parse(run.test_ids_json).length : 0,
+        summary: run.summary_json ? JSON.parse(run.summary_json) : null,
+        startedAt: run.started_at,
+        completedAt: run.completed_at,
+        createdAt: run.created_at,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
   }
 }

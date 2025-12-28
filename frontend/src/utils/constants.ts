@@ -23,6 +23,8 @@ export const ROUTES = {
   TEST_MONITOR_CREATE: '/test-monitor/create',
   TEST_MONITOR_HISTORY: '/test-monitor/history',
   TEST_MONITOR_TUNING: '/test-monitor/tuning',
+  TEST_MONITOR_AB_TESTING: '/test-monitor/ab-testing',
+  TEST_MONITOR_SANDBOX: '/test-monitor/sandbox',
   TEST_MONITOR_RUN_DETAIL: '/test-monitor/run/:runId',
 } as const;
 
