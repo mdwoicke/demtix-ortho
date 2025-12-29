@@ -3,7 +3,8 @@
  * Generic typed table with sortable columns
  */
 
-import React, { useState } from 'react';
+import React from 'react';
+import { useState } from 'react';
 import { cn } from '../../utils/cn';
 import type { TableColumn } from '../../types';
 
@@ -79,10 +80,10 @@ export function Table<T>({
                   'px-6 py-3 text-left text-xs font-semibold text-gray-700 dark:text-slate-200 uppercase tracking-wider transition-colors',
                   column.sortable && 'cursor-pointer select-none hover:bg-gray-200 dark:hover:bg-slate-800'
                 )}
-                onClick={() => column.sortable && handleSort(column.key)}
+                onClick={() => column.sortable && handleSort(column.key as keyof T)}
               >
                 <div className="flex items-center gap-1">
-                  {column.header}
+                  {column.header || column.label}
                   {column.sortable && sortKey === column.key && (
                     <span className="text-blue-600 dark:text-blue-400">
                       {sortDirection === 'asc' ? '↑' : '↓'}
@@ -113,8 +114,8 @@ export function Table<T>({
                   className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-slate-50 transition-colors"
                 >
                   {column.render
-                    ? column.render(row[column.key], row)
-                    : String(row[column.key] ?? '')}
+                    ? column.render(row[column.key as keyof T], row)
+                    : String(row[column.key as keyof T] ?? '')}
                 </td>
               ))}
             </tr>

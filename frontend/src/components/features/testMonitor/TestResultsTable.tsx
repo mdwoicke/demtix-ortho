@@ -3,7 +3,6 @@
  * Displays test results in a table format with status indicators
  */
 
-import React from 'react';
 import { Spinner } from '../../ui';
 import type { TestResult } from '../../../types/testMonitor.types';
 import { cn } from '../../../utils/cn';
@@ -73,7 +72,7 @@ export function TestResultsTable({
         <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
           {results.map((result) => {
             const isSelected = result.testId === selectedTestId;
-            const statusConfig = statusIcons[result.status];
+            const _statusConfig = statusIcons[result.status];
 
             return (
               <tr

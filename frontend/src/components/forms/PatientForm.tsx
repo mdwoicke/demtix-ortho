@@ -3,7 +3,7 @@
  * Form for creating and editing patients with validation
  */
 
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { useForm, FormProvider } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { FormField } from './FormField';
@@ -35,7 +35,7 @@ export function PatientForm({
           lastName: initialData.last_name || '',
           birthdate: initialData.birthdate || '',
           email: initialData.email || '',
-          phoneNumber: initialData.phone_number || '',
+          phoneNumber: initialData.phone || '',
           address: {
             street: initialData.address_street || '',
             city: initialData.address_city || '',

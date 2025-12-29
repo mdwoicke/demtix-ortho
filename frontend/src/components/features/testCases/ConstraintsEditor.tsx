@@ -5,15 +5,16 @@
  * Supports different constraint types with severity levels.
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import type {
   TestConstraintDTO,
   ConstraintTypeDTO,
 } from '../../../types/testMonitor.types';
 
-interface ConstraintsEditorProps {
+export interface ConstraintsEditorProps {
   constraints: TestConstraintDTO[];
   onChange: (constraints: TestConstraintDTO[]) => void;
+  readOnly?: boolean;
 }
 
 const CONSTRAINT_TYPES: { value: ConstraintTypeDTO; label: string; description: string }[] = [

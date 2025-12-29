@@ -3,7 +3,7 @@
  * Monitor and manage A/B experiments for prompt and tool variants
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { PageHeader } from '../../components/layout';
 import { Card, Button, Spinner } from '../../components/ui';
 import { API_CONFIG } from '../../utils/constants';

@@ -3,7 +3,7 @@
  * Dropdown select with label and error states
  */
 
-import React, { forwardRef } from 'react';
+import { forwardRef } from 'react';
 import { cn } from '../../utils/cn';
 import type { SelectOption } from '../../types';
 
@@ -87,7 +87,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
           )}
           {options.map((option, index) => (
             <option
-              key={option.key || index}
+              key={String(option.value) || index}
               value={String(option.value)}
               disabled={option.disabled}
             >

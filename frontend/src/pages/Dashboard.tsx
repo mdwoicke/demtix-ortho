@@ -3,7 +3,7 @@
  * Main dashboard with stats and quick actions
  */
 
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '../components/layout';
 import { Card, Button } from '../components/ui';

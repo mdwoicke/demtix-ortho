@@ -3,7 +3,7 @@
  * Displays findings and issues discovered during test execution
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Spinner } from '../../ui';
 import type { Finding } from '../../../types/testMonitor.types';
 import { cn } from '../../../utils/cn';

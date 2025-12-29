@@ -3,12 +3,10 @@
  * Top navigation bar with logo, environment indicator, theme toggle, and menu toggle
  */
 
-import React from 'react';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
 import { selectEnvironment, toggleEnvironment } from '../../store/slices/authSlice';
 import { toggleSidebar } from '../../store/slices/uiSlice';
 import { useTheme } from '../../contexts/ThemeContext';
-import { Button } from '../ui';
 
 export function Navbar() {
   const dispatch = useAppDispatch();

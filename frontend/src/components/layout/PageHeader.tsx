@@ -3,7 +3,6 @@
  * Page title with breadcrumbs and action buttons
  */
 
-import React from 'react';
 import { Link } from 'react-router-dom';
 
 export interface Breadcrumb {
@@ -16,9 +15,11 @@ export interface PageHeaderProps {
   breadcrumbs?: Breadcrumb[];
   actions?: React.ReactNode;
   subtitle?: string;
+  description?: string;
 }
 
-export function PageHeader({ title, breadcrumbs, actions, subtitle }: PageHeaderProps) {
+export function PageHeader({ title, breadcrumbs, actions, subtitle, description }: PageHeaderProps) {
+  const displaySubtitle = subtitle || description;
   return (
     <div className="mb-6">
       {/* Breadcrumbs */}
@@ -62,7 +63,7 @@ export function PageHeader({ title, breadcrumbs, actions, subtitle }: PageHeader
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-slate-50 transition-colors">{title}</h1>
-          {subtitle && <p className="mt-1 text-sm text-gray-600 dark:text-slate-300 transition-colors">{subtitle}</p>}
+          {displaySubtitle && <p className="mt-1 text-sm text-gray-600 dark:text-slate-300 transition-colors">{displaySubtitle}</p>}
         </div>
         {actions && <div className="flex items-center gap-2">{actions}</div>}
       </div>

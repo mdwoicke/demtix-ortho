@@ -5,7 +5,7 @@
  * (randomly generated) values for test persona fields.
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import type {
   DynamicFieldSpecDTO,
   DynamicFieldTypeDTO,

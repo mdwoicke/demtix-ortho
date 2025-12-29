@@ -3,7 +3,8 @@
  * Main wizard container component with stepper and step content
  */
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
+import { useState, useEffect } from 'react';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import {
   selectCurrentStep,
@@ -28,12 +29,14 @@ interface CreateGoalTestWizardProps {
 }
 
 export function CreateGoalTestWizard({ templateId }: CreateGoalTestWizardProps) {
+  // Note: templateId is available for future use with template loading
   const dispatch = useAppDispatch();
   const currentStep = useAppSelector(selectCurrentStep);
   const formData = useAppSelector(selectFormData);
   const validation = useAppSelector(selectValidation);
   const source = useAppSelector(selectSource);
   const canProceed = useAppSelector(selectCanProceed);
+  // Note: canProceed and templateId are available for future navigation logic
 
   const [showTemplateLibrary, setShowTemplateLibrary] = useState(false);
 

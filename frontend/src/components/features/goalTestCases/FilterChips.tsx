@@ -3,7 +3,6 @@
  * Displays active filters as removable chips
  */
 
-import React from 'react';
 import { clsx } from 'clsx';
 import type { GoalTestFilters } from '../../../types/testMonitor.types';
 

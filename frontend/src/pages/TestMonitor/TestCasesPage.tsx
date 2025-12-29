@@ -4,7 +4,7 @@
  * Uses a 3-panel layout: Filters | List | Detail/Editor
  */
 
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useAppDispatch, useAppSelector } from '../../hooks';
 import { Card } from '../../components/ui';
 import {

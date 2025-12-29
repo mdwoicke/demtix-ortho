@@ -20,8 +20,8 @@ export interface PatientFormData {
     state?: string;
     postalCode?: string;
   };
-  providerGuid?: string;
-  locationGuid?: string;
+  providerGuid: string;
+  locationGuid: string;
   note?: string;
 }
 
@@ -36,6 +36,11 @@ export interface AppointmentFormData {
   startTime: string;
   durationMinutes: number;
   note?: string;
+  // Additional fields used by forms
+  locationGuid?: string;
+  providerGuid?: string;
+  duration?: number;
+  notes?: string;
 }
 
 /**
@@ -51,6 +56,7 @@ export interface FormFieldProps {
   disabled?: boolean;
   register?: UseFormRegister<any>;
   className?: string;
+  maxLength?: number;
 }
 
 /**

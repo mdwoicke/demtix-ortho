@@ -9,7 +9,7 @@
  * - Compact mode for inline display
  */
 
-import React, { useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { Card } from '../../ui';
 import { Spinner } from '../../ui';
 import type { PromptFile } from '../../../types/testMonitor.types';

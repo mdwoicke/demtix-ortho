@@ -3,7 +3,7 @@
  * Displays prompt files with version history and copy/edit functionality
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Spinner, Modal } from '../../ui';
 import type { PromptFile, PromptVersionHistory } from '../../../types/testMonitor.types';
 import { cn } from '../../../utils/cn';

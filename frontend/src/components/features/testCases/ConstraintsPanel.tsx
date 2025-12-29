@@ -5,7 +5,6 @@
  * Different constraint options are shown based on field type.
  */
 
-import React from 'react';
 import type {
   DynamicFieldTypeDTO,
   FieldConstraintsDTO,

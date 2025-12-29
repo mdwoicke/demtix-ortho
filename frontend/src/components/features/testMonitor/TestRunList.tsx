@@ -3,8 +3,7 @@
  * Displays a list of test runs with status and statistics
  */
 
-import React from 'react';
-import { Card, Spinner } from '../../ui';
+import { Spinner } from '../../ui';
 import type { TestRun } from '../../../types/testMonitor.types';
 import { cn } from '../../../utils/cn';
 

@@ -3,7 +3,7 @@
  * Form for creating appointments with validation
  */
 
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useForm, FormProvider } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { FormField } from './FormField';
@@ -58,27 +58,27 @@ export function AppointmentForm({
 
   // Convert reference data to select options
   const locationOptions = locations.map((loc) => ({
-    value: loc.location_guid,
-    label: loc.location_name || 'Unknown Location',
+    value: loc.guid,
+    label: loc.name || 'Unknown Location',
   }));
 
   const appointmentTypeOptions = appointmentTypes.map((type) => ({
-    value: type.appointment_type_guid,
-    label: type.appointment_type_name || 'Unknown Type',
+    value: type.guid,
+    label: type.description || 'Unknown Type',
   }));
 
   const providerOptions = providers.map((prov) => ({
-    value: prov.provider_guid,
-    label: prov.provider_name || 'Unknown Provider',
+    value: prov.guid,
+    label: prov.scheduleColumnDescription || 'Unknown Provider',
   }));
 
   const durationOptions = [
-    { value: 15, label: '15 minutes' },
-    { value: 30, label: '30 minutes' },
-    { value: 45, label: '45 minutes' },
-    { value: 60, label: '1 hour' },
-    { value: 90, label: '1.5 hours' },
-    { value: 120, label: '2 hours' },
+    { value: '15', label: '15 minutes' },
+    { value: '30', label: '30 minutes' },
+    { value: '45', label: '45 minutes' },
+    { value: '60', label: '1 hour' },
+    { value: '90', label: '1.5 hours' },
+    { value: '120', label: '2 hours' },
   ];
 
   if (referenceLoading) {

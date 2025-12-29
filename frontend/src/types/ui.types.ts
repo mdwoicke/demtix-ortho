@@ -3,7 +3,7 @@
  * Types for UI component props and states
  */
 
-import { ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 /**
  * Common button variants
@@ -46,7 +46,8 @@ export interface ModalProps {
  */
 export interface TableColumn<T> {
   key: keyof T | string;
-  label: string;
+  label?: string;
+  header?: string;
   sortable?: boolean;
   render?: (value: unknown, row: T) => ReactNode;
   width?: string;

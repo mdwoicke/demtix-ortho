@@ -3,7 +3,7 @@
  * Text input with label and error states
  */
 
-import React, { forwardRef } from 'react';
+import { forwardRef } from 'react';
 import { cn } from '../../utils/cn';
 
 export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {

@@ -4,7 +4,7 @@
  * Part of Phase 6 of the Advanced Tuning Tab implementation
  */
 
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Card } from '../../ui';
 import type { GeneratedFix, VerificationSummary } from '../../../types/testMonitor.types';
 import { cn } from '../../../utils/cn';

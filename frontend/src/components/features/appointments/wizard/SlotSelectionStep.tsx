@@ -3,7 +3,7 @@
  * Step 2 of the appointment wizard - Select an available time slot
  */
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import dayGridPlugin from '@fullcalendar/daygrid';

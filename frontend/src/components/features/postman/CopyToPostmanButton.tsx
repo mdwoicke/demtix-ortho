@@ -3,7 +3,7 @@
  * Generates and copies cURL command to clipboard
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Button } from '../../ui/Button';
 import { useToast } from '../../../hooks/useToast';
 import { generateCurlCommand } from '../../../services/api/postmanApi';

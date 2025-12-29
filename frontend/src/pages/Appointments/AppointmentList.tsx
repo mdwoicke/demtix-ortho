@@ -3,7 +3,7 @@
  * View and manage appointments with filtering
  */
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../../components/layout';
 import { Button, Select, DatePicker } from '../../components/ui';
@@ -116,13 +116,13 @@ export function AppointmentList() {
     localPatientGuid;
 
   const locationOptions = locations.map((loc) => ({
-    value: loc.location_guid,
-    label: loc.location_name || 'Unknown Location',
+    value: loc.guid,
+    label: loc.name || 'Unknown Location',
   }));
 
   const providerOptions = providers.map((prov) => ({
-    value: prov.provider_guid,
-    label: prov.provider_name || 'Unknown Provider',
+    value: prov.guid,
+    label: prov.scheduleColumnDescription || 'Unknown Provider',
   }));
 
   // Determine Postman procedure and parameters based on context

@@ -3,7 +3,6 @@
  * Reusable button with multiple variants and sizes
  */
 
-import React from 'react';
 import { cn } from '../../utils/cn';
 import type { ButtonVariant } from '../../types';
 
@@ -23,6 +22,8 @@ const variantStyles: Record<ButtonVariant, string> = {
     'bg-red-600 dark:bg-red-500 text-white hover:bg-red-700 dark:hover:bg-red-600 focus:ring-red-500 dark:focus:ring-red-400 disabled:bg-red-300 dark:disabled:bg-red-800',
   ghost:
     'bg-transparent text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 focus:ring-gray-500 dark:focus:ring-gray-400 disabled:text-gray-400 dark:disabled:text-gray-600',
+  outline:
+    'bg-transparent border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 focus:ring-gray-500 dark:focus:ring-gray-400 disabled:text-gray-400 dark:disabled:text-gray-600',
 };
 
 const sizeStyles = {

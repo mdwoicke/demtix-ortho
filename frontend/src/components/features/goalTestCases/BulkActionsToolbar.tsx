@@ -3,7 +3,6 @@
  * Displays when items are selected for bulk operations
  */
 
-import React from 'react';
 import { clsx } from 'clsx';
 
 // Icons

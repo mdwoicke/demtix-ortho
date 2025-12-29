@@ -5,7 +5,7 @@
  * API calls are shown inline with the conversation flow
  */
 
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { Spinner } from '../../ui';

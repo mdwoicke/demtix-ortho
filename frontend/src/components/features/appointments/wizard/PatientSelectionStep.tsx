@@ -3,7 +3,7 @@
  * Step 1 of the appointment wizard - Select a patient
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { usePatients } from '../../../../hooks/usePatients';
 import { Button } from '../../../ui/Button';
 import { Input } from '../../../ui/Input';

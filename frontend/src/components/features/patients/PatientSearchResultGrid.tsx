@@ -3,7 +3,6 @@
  * Display patient search results in a responsive grid layout
  */
 
-import React from 'react';
 import { PatientCard } from './PatientCard';
 import type { Patient } from '../../../types';
 

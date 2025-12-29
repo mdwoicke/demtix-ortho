@@ -21,6 +21,9 @@ export type {
   AvailableSlot,
   GetAvailableApptsParams,
   AvailableApptsResponse,
+  GetAppointmentsParams,
+  ConfirmAppointmentRequest,
+  CancelAppointmentRequest,
 } from '../../../shared/types/Appointment';
 
 export type {

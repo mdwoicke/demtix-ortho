@@ -131,6 +131,10 @@ export interface ComparisonResult {
   testResults: TestComparisonResult[];
   summary: ComparisonSummary;
   message?: string;
+  // Raw results for detail panel (populated from ComparisonRun)
+  productionResults?: Record<string, any> | null;
+  sandboxAResults?: Record<string, any> | null;
+  sandboxBResults?: Record<string, any> | null;
 }
 
 /**

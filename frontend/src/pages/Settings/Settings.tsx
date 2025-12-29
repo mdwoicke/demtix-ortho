@@ -3,7 +3,7 @@
  * Application settings and cache management
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { PageHeader } from '../../components/layout';
 import { Card, Button } from '../../components/ui';
 import { CopyToPostmanButton } from '../../components/features/postman/CopyToPostmanButton';

@@ -3,7 +3,7 @@
  * Clickable tag cloud for filtering test cases
  */
 
-import React from 'react';
+import { useState } from 'react';
 
 interface TagCloudProps {
   tags: string[];
@@ -18,7 +18,7 @@ export function TagCloud({
   onToggle,
   maxVisible = 10,
 }: TagCloudProps) {
-  const [showAll, setShowAll] = React.useState(false);
+  const [showAll, setShowAll] = useState(false);
 
   const visibleTags = showAll ? tags : tags.slice(0, maxVisible);
   const hasMore = tags.length > maxVisible;

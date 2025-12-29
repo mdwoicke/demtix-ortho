@@ -3,7 +3,7 @@
  * Allows users to run LLM-powered diagnosis on test failures and generate fixes
  */
 
-import React, { useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '../../../hooks';
 import { Card, Button } from '../../ui';
 import {

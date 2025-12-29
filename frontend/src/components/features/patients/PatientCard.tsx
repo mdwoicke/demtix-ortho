@@ -3,7 +3,6 @@
  * Display card for patient information
  */
 
-import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Button } from '../../ui';
 import { formatPhoneNumber, formatDate } from '../../../utils/formatters';

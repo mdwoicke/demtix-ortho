@@ -3,7 +3,7 @@
  * First step of the wizard: name, description, category, tags, initial message
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../../../../store/hooks';
 import {
   selectFormData,

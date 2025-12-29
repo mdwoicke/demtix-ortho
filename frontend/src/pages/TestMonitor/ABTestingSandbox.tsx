@@ -3,7 +3,7 @@
  * Two-sandbox system for testing Flowise file variants with three-way comparison
  */
 
-import React, { useEffect, useCallback } from 'react';
+import { useEffect, useCallback } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { PageHeader } from '../../components/layout';
 import { Card, Spinner } from '../../components/ui';

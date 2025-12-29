@@ -4,7 +4,7 @@
  * Part of Phase 4 of the Advanced Tuning Tab implementation
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Card } from '../../ui';
 import type { ConversationTurn } from '../../../types/testMonitor.types';
 import { cn } from '../../../utils/cn';

@@ -3,7 +3,7 @@
  * Expandable card for displaying patient search results
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { fetchPatient, selectSelectedPatient, selectPatientLoading } from '../../../store/slices/patientSlice';
 import { Card } from '../../ui';

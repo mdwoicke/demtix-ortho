@@ -3,7 +3,7 @@
  * Search and view all patients with full CRUD functionality
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { PageHeader } from '../../components/layout';
 import { Button, Modal } from '../../components/ui';
 import { PatientSearchBar, PatientSearchResultGrid } from '../../components/features';

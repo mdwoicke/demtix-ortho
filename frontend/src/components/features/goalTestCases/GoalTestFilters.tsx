@@ -3,7 +3,7 @@
  * Search bar and filter dropdowns for goal test cases
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { clsx } from 'clsx';
 import type { GoalTestFilters as FiltersType, GoalTestFilterPreset } from '../../../types/testMonitor.types';
 

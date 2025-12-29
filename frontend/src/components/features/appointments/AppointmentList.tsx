@@ -3,7 +3,6 @@
  * List display for appointments with filtering
  */
 
-import React from 'react';
 import { AppointmentCard } from './AppointmentCard';
 import { Spinner } from '../../ui';
 import type { Appointment } from '../../../types';

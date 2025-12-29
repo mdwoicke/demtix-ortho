@@ -5,7 +5,7 @@
  * Supports different goal types with required fields selection.
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import type {
   ConversationGoalDTO,
   GoalTypeDTO,
@@ -13,9 +13,10 @@ import type {
 } from '../../../types/testMonitor.types';
 import { COLLECTABLE_FIELDS, GOAL_TYPES } from '../../../types/testMonitor.types';
 
-interface GoalsEditorProps {
+export interface GoalsEditorProps {
   goals: ConversationGoalDTO[];
   onChange: (goals: ConversationGoalDTO[]) => void;
+  readOnly?: boolean;
 }
 
 const DEFAULT_GOAL: ConversationGoalDTO = {

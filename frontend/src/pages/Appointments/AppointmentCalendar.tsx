@@ -3,7 +3,7 @@
  * Calendar view of appointments with scheduling
  */
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PageHeader } from '../../components/layout';
 import { Modal, Button } from '../../components/ui';
 import { CalendarView, AppointmentCard } from '../../components/features';

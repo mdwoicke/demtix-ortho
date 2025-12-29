@@ -3,7 +3,7 @@
  * Main wizard container for multi-step appointment booking
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useAppDispatch } from '../../../../store/hooks';
 import { createAppointment } from '../../../../store/slices/appointmentSlice';
 import { Modal } from '../../../ui/Modal';

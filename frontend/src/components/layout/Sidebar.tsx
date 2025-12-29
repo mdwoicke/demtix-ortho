@@ -3,7 +3,6 @@
  * Navigation sidebar with menu items
  */
 
-import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
 import { selectSidebarOpen, setSidebarOpen } from '../../store/slices/uiSlice';

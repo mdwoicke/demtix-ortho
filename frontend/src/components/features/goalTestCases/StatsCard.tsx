@@ -3,7 +3,6 @@
  * Individual statistic card for the Goal Test Dashboard
  */
 
-import React from 'react';
 import { clsx } from 'clsx';
 
 interface StatsCardProps {

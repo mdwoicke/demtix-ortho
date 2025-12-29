@@ -3,7 +3,7 @@
  * Read-only detail view of a test case with collapsible steps
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { TestCaseRecord, TestCaseStepDTO } from '../../../types/testMonitor.types';
 

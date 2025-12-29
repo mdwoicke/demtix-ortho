@@ -3,7 +3,7 @@
  * Wrapper that adds expand/collapse functionality to panels
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Card } from '../../ui';
 import { cn } from '../../../utils/cn';

@@ -3,7 +3,6 @@
  * Displays stats cards and quick actions for goal test cases
  */
 
-import React from 'react';
 import { useSelector } from 'react-redux';
 import { clsx } from 'clsx';
 import { StatsCard } from './StatsCard';

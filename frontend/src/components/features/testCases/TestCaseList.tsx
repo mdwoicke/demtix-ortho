@@ -3,7 +3,6 @@
  * Displays a sortable list of test cases with quick actions
  */
 
-import React from 'react';
 import type { TestCaseRecord } from '../../../types/testMonitor.types';
 
 interface TestCaseListProps {

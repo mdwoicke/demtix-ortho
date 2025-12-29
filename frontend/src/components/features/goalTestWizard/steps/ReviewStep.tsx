@@ -3,7 +3,7 @@
  * Final step: review all settings before creating the test
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../../../../store/hooks';
 import {
   selectFormData,

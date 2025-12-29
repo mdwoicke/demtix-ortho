@@ -3,7 +3,6 @@
  * Tab router wrapper for test monitoring pages
  */
 
-import React from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { ROUTES } from '../../utils/constants';
 

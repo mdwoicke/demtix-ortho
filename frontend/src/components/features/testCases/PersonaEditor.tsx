@@ -6,11 +6,10 @@
  * Supports dynamic field generation with DynamicFieldToggle.
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import type {
   UserPersonaDTO,
   ChildDataDTO,
-  DataInventoryDTO,
   PersonaTraitsDTO,
   DynamicFieldSpecDTO,
   DynamicChildDataDTO,

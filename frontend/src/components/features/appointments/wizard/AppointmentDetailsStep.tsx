@@ -3,7 +3,6 @@
  * Step 3 of the appointment wizard - Enter appointment details and notes
  */
 
-import React from 'react';
 import { useForm } from 'react-hook-form';
 import { useReference } from '../../../../hooks/useReference';
 import { Button } from '../../../ui/Button';

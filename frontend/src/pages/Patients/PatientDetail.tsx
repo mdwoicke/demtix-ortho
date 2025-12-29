@@ -4,7 +4,7 @@
  * Note: Edit patient feature is disabled - Cloud 9 API SetPatientDemographicInfo procedure not authorized
  */
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { PageHeader } from '../../components/layout';
 import { Button, Card, Spinner } from '../../components/ui';

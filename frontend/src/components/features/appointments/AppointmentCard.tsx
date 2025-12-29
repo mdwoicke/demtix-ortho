@@ -3,7 +3,6 @@
  * Modern, stylish card for appointment display with action buttons
  */
 
-import React from 'react';
 import { Button } from '../../ui';
 import { formatDate, formatTime } from '../../../utils/formatters';
 import type { Appointment } from '../../../types';

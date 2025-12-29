@@ -3,7 +3,7 @@
  * Card displaying a goal test case with quick actions
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { clsx } from 'clsx';
 import { CATEGORY_STYLES, type GoalTestCaseRecord, type TestCategory } from '../../../types/testMonitor.types';
 

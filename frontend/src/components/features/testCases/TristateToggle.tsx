@@ -9,7 +9,6 @@
  * Displays as a compact horizontal button group with dice icon for random.
  */
 
-import React from 'react';
 import type { TristateValue } from '../../../types/testMonitor.types';
 
 // Dice icon component

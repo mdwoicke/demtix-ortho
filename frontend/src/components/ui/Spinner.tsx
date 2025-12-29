@@ -3,7 +3,6 @@
  * Loading indicator with different sizes
  */
 
-import React from 'react';
 import { cn } from '../../utils/cn';
 
 export interface SpinnerProps {

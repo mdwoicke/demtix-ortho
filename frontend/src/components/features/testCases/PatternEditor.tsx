@@ -3,7 +3,7 @@
  * Editor for regex pattern lists with validation
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 
 interface PatternEditorProps {
   label: string;

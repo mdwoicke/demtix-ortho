@@ -4,7 +4,8 @@
  * Patient names in responses are clickable and link to patient details
  */
 
-import React, { useState } from 'react';
+import React from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Spinner } from '../../ui';
 import type { ApiCall } from '../../../types/testMonitor.types';

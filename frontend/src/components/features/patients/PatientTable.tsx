@@ -3,7 +3,6 @@
  * Sortable table for displaying patients
  */
 
-import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Table } from '../../ui';
 import { formatPhoneNumber, formatDate } from '../../../utils/formatters';
@@ -23,7 +22,7 @@ export function PatientTable({ patients, isLoading = false }: PatientTableProps)
       key: 'patient_id',
       header: 'Patient #',
       sortable: true,
-      render: (value) => value || 'N/A',
+      render: (value) => (value as string) || 'N/A',
     },
     {
       key: 'first_name',
@@ -45,7 +44,7 @@ export function PatientTable({ patients, isLoading = false }: PatientTableProps)
       key: 'email',
       header: 'Email',
       sortable: false,
-      render: (value) => value || 'N/A',
+      render: (value) => (value as string) || 'N/A',
     },
     {
       key: 'phone',

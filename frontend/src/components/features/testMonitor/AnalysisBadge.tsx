@@ -3,7 +3,6 @@
  * Shows analysis status for a test run
  */
 
-import React from 'react';
 import { cn } from '../../../utils/cn';
 
 interface AnalysisBadgeProps {

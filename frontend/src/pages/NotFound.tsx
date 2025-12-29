@@ -3,7 +3,6 @@
  * 404 error page
  */
 
-import React from 'react';
 import { Link } from 'react-router-dom';
 import { ROUTES } from '../utils/constants';
 import { Button } from '../components/ui';

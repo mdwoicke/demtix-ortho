@@ -3,7 +3,7 @@
  * Notification toast with auto-dismiss
  */
 
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { cn } from '../../utils/cn';
 import type { Toast as ToastType } from '../../types';
 

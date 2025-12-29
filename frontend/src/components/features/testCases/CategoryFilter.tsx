@@ -3,8 +3,6 @@
  * Category checkbox filter with test counts
  */
 
-import React from 'react';
-
 interface CategoryCount {
   'happy-path': number;
   'edge-case': number;

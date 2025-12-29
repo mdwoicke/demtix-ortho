@@ -3,7 +3,7 @@
  * Displays recently applied fixes and allows re-running affected tests to verify effectiveness
  */
 
-import React, { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { Card, Button } from '../../ui';
 import type { GeneratedFix, VerificationResult, VerificationSummary } from '../../../types/testMonitor.types';
 
@@ -23,7 +23,7 @@ export function VerificationPanel({
   onFixVerified,
 }: VerificationPanelProps) {
   const [selectedFixIds, setSelectedFixIds] = useState<Set<string>>(new Set());
-  const [expandedResults, setExpandedResults] = useState(false);
+  const [_expandedResults, _setExpandedResults] = useState(false);
 
   // Get fixes that have been applied and need verification
   const fixesNeedingVerification = useMemo(() => {

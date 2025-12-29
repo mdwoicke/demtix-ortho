@@ -3,7 +3,7 @@
  * Modal component for browsing and selecting test templates
  */
 
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useAppDispatch } from '../../../../store/hooks';
 import { applyTemplate } from '../../../../store/slices/createGoalTestSlice';
 import type { GoalTestTemplate } from '../../../../types/goalTestWizard.types';

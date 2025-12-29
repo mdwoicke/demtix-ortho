@@ -3,7 +3,7 @@
  * Accessible modal dialog with backdrop and ESC key support
  */
 
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { cn } from '../../utils/cn';
 
 export interface ModalProps {

@@ -4,7 +4,7 @@
  * Includes "Copy Full Prompt" dropdown and fix application flow
  */
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Spinner } from '../../ui';
 import type { GeneratedFix, PromptFile } from '../../../types/testMonitor.types';
 import { cn } from '../../../utils/cn';

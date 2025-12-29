@@ -3,7 +3,7 @@
  * Date input with formatting
  */
 
-import React, { forwardRef } from 'react';
+import { forwardRef } from 'react';
 import { format, parse } from 'date-fns';
 import { Input } from './Input';
 import type { InputProps } from './Input';

@@ -3,7 +3,7 @@
  * Manage AI-generated fixes and prompt versions
  */
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAppDispatch, useAppSelector } from '../../hooks';
 import { PageHeader } from '../../components/layout';
 import { Card } from '../../components/ui';

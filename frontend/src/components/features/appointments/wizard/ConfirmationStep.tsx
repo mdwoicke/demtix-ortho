@@ -3,7 +3,6 @@
  * Step 4 of the appointment wizard - Final review and confirmation
  */
 
-import React from 'react';
 import { useReference } from '../../../../hooks/useReference';
 import { Button } from '../../../ui/Button';
 import { Card } from '../../../ui/Card';

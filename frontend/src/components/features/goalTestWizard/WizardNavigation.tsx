@@ -3,7 +3,6 @@
  * Bottom navigation bar with Back, Next, and Submit buttons
  */
 
-import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import {

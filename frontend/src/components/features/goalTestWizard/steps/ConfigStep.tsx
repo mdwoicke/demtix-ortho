@@ -3,7 +3,6 @@
  * Fourth step: configure response settings using ResponseConfigEditor
  */
 
-import React from 'react';
 import { useAppDispatch, useAppSelector } from '../../../../store/hooks';
 import {
   selectFormData,

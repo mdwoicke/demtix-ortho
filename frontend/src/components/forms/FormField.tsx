@@ -3,10 +3,9 @@
  * Reusable form field wrapper with react-hook-form integration
  */
 
-import React from 'react';
 import { useFormContext, Controller } from 'react-hook-form';
 import { Input, Select, DatePicker } from '../ui';
-import type { InputProps, SelectProps, DatePickerProps } from '../ui';
+import type { SelectProps, DatePickerProps } from '../ui';
 
 export interface FormFieldProps {
   name: string;

@@ -5,7 +5,6 @@
  * Handles maxTurns, useLlmResponses, and handleUnknownIntents settings.
  */
 
-import React from 'react';
 import type { ResponseConfigDTO, TristateValue } from '../../../types/testMonitor.types';
 
 interface ResponseConfigEditorProps {

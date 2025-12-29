@@ -3,7 +3,6 @@
  * Collapsible section for grouping test cases by category
  */
 
-import React from 'react';
 import { clsx } from 'clsx';
 import { CATEGORY_STYLES, type TestCategory } from '../../../types/testMonitor.types';
 

@@ -3,7 +3,7 @@
  * Editable list of test steps with drag-and-drop reordering
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -26,8 +26,6 @@ import { SemanticExpectationBuilder } from './SemanticExpectationBuilder';
 import type {
   TestCaseStepDTO,
   TestCasePresets,
-  SemanticExpectationDTO,
-  NegativeExpectationDTO,
 } from '../../../types/testMonitor.types';
 
 interface StepEditorProps {

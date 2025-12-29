@@ -3,7 +3,7 @@
  * Builder for semantic and negative expectations with preset dropdown
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import type {
   SemanticExpectationDTO,
   NegativeExpectationDTO,

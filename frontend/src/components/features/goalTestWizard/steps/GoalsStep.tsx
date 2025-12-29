@@ -3,7 +3,7 @@
  * Third step: configure goals and constraints using GoalsEditor and ConstraintsEditor
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../../../../store/hooks';
 import {
   selectFormData,

@@ -3,7 +3,7 @@
  * FullCalendar wrapper for appointment visualization
  */
 
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
@@ -33,13 +33,18 @@ export function CalendarView({
         cancelled: '#ef4444', // red-500
       }[appointment.status || 'pending'];
 
+      // Calculate end time from start_time and duration/appointment_minutes
+      const startTime = appointment.start_time || appointment.appointment_date_time;
+      const durationMinutes = appointment.duration || appointment.appointment_minutes || 30;
+      const endTime = startTime ? new Date(new Date(startTime).getTime() + durationMinutes * 60000).toISOString() : undefined;
+
       return {
         id: appointment.appointment_guid,
-        title: `${appointment.patient_name || 'Patient'} - ${
-          appointment.appointment_type_name || 'Appointment'
+        title: `${appointment.patientName || appointment.patient_first_name || 'Patient'} - ${
+          appointment.appointment_type_name || appointment.appointment_type_description || 'Appointment'
         }`,
-        start: appointment.start_time,
-        end: appointment.end_time,
+        start: startTime,
+        end: endTime,
         backgroundColor: statusColor,
         borderColor: statusColor,
         extendedProps: {

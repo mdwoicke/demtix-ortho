@@ -3,7 +3,7 @@
  * Main wrapper page for the goal test creation wizard
  */
 
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {

@@ -4,7 +4,7 @@
  * and pre-populates the wizard with AI-generated suggestions
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../../../../store/hooks';
 import {
   selectAIAnalyzer,
@@ -36,7 +36,7 @@ export function AIAnalyzerStep() {
   };
 
   // Accept the AI analysis result and continue to the next step
-  const handleAcceptAndContinue = () => {
+  const _handleAcceptAndContinue = () => {
     if (aiAnalyzer.result?.success && aiAnalyzer.result?.wizardData) {
       dispatch(applyAnalysisResult(aiAnalyzer.result));
       dispatch(setStep(WizardStep.BasicInfo));

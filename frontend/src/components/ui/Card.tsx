@@ -3,7 +3,6 @@
  * Container with header, body, and footer sections
  */
 
-import React from 'react';
 import { cn } from '../../utils/cn';
 
 export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {

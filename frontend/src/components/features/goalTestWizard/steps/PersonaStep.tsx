@@ -3,7 +3,7 @@
  * Second step: configure the test persona using PersonaEditor
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../../../../store/hooks';
 import {
   selectFormData,

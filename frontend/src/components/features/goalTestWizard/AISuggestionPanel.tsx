@@ -3,7 +3,7 @@
  * Slide-over panel for AI-generated goal and constraint suggestions
  */
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import {
   selectFormData,
@@ -97,7 +97,7 @@ export function AISuggestionPanel({ isOpen, onClose }: AISuggestionPanelProps) {
     }
   };
 
-  const getConfidenceColor = (confidence: number) => {
+  const _getConfidenceColor = (confidence: number) => {
     if (confidence >= 0.8) return 'text-green-600 dark:text-green-400';
     if (confidence >= 0.6) return 'text-yellow-600 dark:text-yellow-400';
     return 'text-gray-500 dark:text-gray-400';

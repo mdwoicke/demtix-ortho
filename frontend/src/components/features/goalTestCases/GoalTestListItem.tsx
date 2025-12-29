@@ -3,7 +3,6 @@
  * Compact horizontal row for displaying test cases in a list
  */
 
-import React from 'react';
 import { clsx } from 'clsx';
 import { CATEGORY_STYLES, type GoalTestCaseRecord, type TestCategory } from '../../../types/testMonitor.types';
 

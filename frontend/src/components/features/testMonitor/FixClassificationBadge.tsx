@@ -4,7 +4,6 @@
  * Based on the "Golden Rule" from the iva-prompt-tuning skill
  */
 
-import React from 'react';
 import type { FixClassification } from '../../../types/testMonitor.types';
 
 interface FixClassificationBadgeProps {
