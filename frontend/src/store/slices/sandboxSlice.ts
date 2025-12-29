@@ -614,6 +614,16 @@ export const sandboxSlice = createSlice({
       state.comparison.currentComparisonId = action.payload.comparisonId;
       // Update lastResult with current state (may still be running)
       state.comparison.lastResult = action.payload;
+
+      // Also update rawComparisonData if results are available
+      const run = action.payload as any;
+      if (run.productionResults || run.sandboxAResults || run.sandboxBResults) {
+        state.comparison.rawComparisonData = {
+          productionResults: run.productionResults || {},
+          sandboxAResults: run.sandboxAResults || {},
+          sandboxBResults: run.sandboxBResults || {},
+        };
+      }
     },
   },
   extraReducers: (builder) => {
@@ -838,6 +848,16 @@ export const sandboxSlice = createSlice({
         state.comparison.isRunning = false;
         state.comparison.currentComparisonId = action.payload.comparisonId;
         state.comparison.lastResult = action.payload;
+
+        // Also populate rawComparisonData for detail panel (same as fetchComparisonRun)
+        const run = action.payload;
+        if (run.status === 'completed' && run.productionResults) {
+          state.comparison.rawComparisonData = {
+            productionResults: run.productionResults || {},
+            sandboxAResults: run.sandboxAResults || {},
+            sandboxBResults: run.sandboxBResults || {},
+          };
+        }
       })
       .addCase(pollComparisonStatus.rejected, (state, action) => {
         state.comparison.isRunning = false;

@@ -3,7 +3,7 @@
  * Slide-out panel showing detailed test results with tabbed interface
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { cn } from '../../../utils/cn';
 import type { DetailedEndpointResult, GoalResult, TranscriptEntry } from '../../../types/sandbox.types';
 
@@ -217,7 +217,14 @@ function EndpointResultContent({ result, tabKey }: { result: DetailedEndpointRes
           <ul className="space-y-1">
             {result.constraintViolations.map((violation, idx) => (
               <li key={idx} className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded px-3 py-2">
-                {violation}
+                {typeof violation === 'string' ? violation : (
+                  <div>
+                    <span className="font-medium">{(violation as any).type || 'Violation'}</span>
+                    {(violation as any).description && (
+                      <span className="ml-1">- {(violation as any).description}</span>
+                    )}
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -236,7 +243,17 @@ function EndpointResultContent({ result, tabKey }: { result: DetailedEndpointRes
           <ul className="space-y-1">
             {result.issues.map((issue, idx) => (
               <li key={idx} className="text-sm text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 rounded px-3 py-2">
-                {issue}
+                {typeof issue === 'string' ? issue : (
+                  <div>
+                    <span className="font-medium">{(issue as any).type || 'Issue'}</span>
+                    {(issue as any).description && (
+                      <span className="ml-1">- {(issue as any).description}</span>
+                    )}
+                    {(issue as any).turnNumber && (
+                      <span className="text-xs ml-2 text-yellow-500">(Turn {(issue as any).turnNumber})</span>
+                    )}
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -271,6 +288,22 @@ export function TestResultDetailPanel({
   if (sandboxB) availableTabs.push('sandboxB');
 
   const [activeTab, setActiveTab] = useState<TabKey>(availableTabs[0] || 'production');
+
+  // Reset active tab when current tab becomes unavailable
+  // This handles edge cases where data changes but testId stays the same
+  useEffect(() => {
+    const isCurrentTabAvailable =
+      (activeTab === 'production' && production) ||
+      (activeTab === 'sandboxA' && sandboxA) ||
+      (activeTab === 'sandboxB' && sandboxB);
+
+    if (!isCurrentTabAvailable) {
+      // Switch to first available tab
+      if (production) setActiveTab('production');
+      else if (sandboxA) setActiveTab('sandboxA');
+      else if (sandboxB) setActiveTab('sandboxB');
+    }
+  }, [activeTab, production, sandboxA, sandboxB]);
 
   const getResult = (tab: TabKey): DetailedEndpointResult | null => {
     switch (tab) {
