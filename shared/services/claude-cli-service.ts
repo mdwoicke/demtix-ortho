@@ -1,9 +1,10 @@
 /**
  * Claude CLI Service
  * Wraps the Claude CLI as a subprocess for LLM operations
+ * Uses async spawn to avoid blocking the Node.js event loop
  */
 
-import { execSync } from 'child_process';
+import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -235,70 +236,108 @@ export class ClaudeCliService {
 
   /**
    * Run a CLI command and return the result
-   * Uses execSync which works reliably on Windows (spawn with pipes hangs)
+   * Uses async spawn to avoid blocking the Node.js event loop
    */
   private runCommand(
     args: string[],
     timeout: number = 30000,
-    pipeFromFile?: string // Optional file path to pipe content from
+    pipeFromFile?: string // Optional file path to pipe content from via stdin
   ): Promise<{ success: boolean; result?: string; error?: string }> {
     return new Promise((resolve) => {
       const isWindows = process.platform === 'win32';
-      // On Windows, need to use claude.cmd and run via shell for proper PATH resolution
-      const command = 'claude';
+      let stdout = '';
+      let stderr = '';
+      let timeoutId: NodeJS.Timeout | null = null;
+      let resolved = false;
 
-      // Build command string
-      const fullCommand = `${command} ${args.map(arg => {
-        // Quote arguments containing spaces or special characters
-        if (arg.includes(' ') || arg.includes('"') || arg.includes("'")) {
-          return `"${arg.replace(/"/g, '\\"')}"`;
-        }
-        return arg;
-      }).join(' ')}`;
+      // Helper to resolve only once
+      const safeResolve = (result: { success: boolean; result?: string; error?: string }) => {
+        if (resolved) return;
+        resolved = true;
+        if (timeoutId) clearTimeout(timeoutId);
+        resolve(result);
+      };
 
       try {
-        // Build the shell command
-        let shellCommand: string;
-        if (isWindows) {
-          if (pipeFromFile) {
-            // Pipe content from file to claude on Windows
-            shellCommand = `cmd.exe /c type "${pipeFromFile}" | ${fullCommand}`;
-          } else {
-            shellCommand = `cmd.exe /c ${fullCommand}`;
-          }
-        } else {
-          if (pipeFromFile) {
-            // Pipe content from file to claude on Unix
-            shellCommand = `cat "${pipeFromFile}" | ${fullCommand}`;
-          } else {
-            shellCommand = fullCommand;
-          }
-        }
-
-        const result = execSync(shellCommand, {
-          encoding: 'utf8',
-          timeout,
+        // Use shell: true on all platforms for PATH resolution and proper stdin forwarding
+        // This is more reliable than manually invoking cmd.exe on Windows
+        const proc = spawn('claude', args, {
           env: { ...process.env },
+          shell: true,
           stdio: ['pipe', 'pipe', 'pipe'],
           windowsHide: true,
         });
 
-        resolve({ success: true, result: result.toString() });
-      } catch (error: any) {
-        // execSync throws on non-zero exit code or timeout
-        if (error.killed) {
-          resolve({ success: false, error: `Command timed out after ${timeout}ms` });
-        } else if (error.status !== undefined) {
-          // Process exited with non-zero code
-          resolve({
-            success: false,
-            error: error.stderr?.toString() || `Exit code: ${error.status}`,
-            result: error.stdout?.toString(), // Include stdout for debugging
-          });
-        } else {
-          // Other error (e.g., command not found)
-          resolve({ success: false, error: error.message });
+        // If we have a file to pipe, read and write to stdin
+        if (pipeFromFile) {
+          try {
+            const content = fs.readFileSync(pipeFromFile, 'utf8');
+            if (proc.stdin) {
+              proc.stdin.write(content);
+              proc.stdin.end();
+            }
+          } catch (readError: any) {
+            safeResolve({ success: false, error: `Failed to read pipe file: ${readError.message}` });
+            proc.kill();
+            return;
+          }
         }
+
+        // Set timeout
+        timeoutId = setTimeout(() => {
+          proc.kill('SIGTERM');
+          // Give it a moment to terminate gracefully, then force kill
+          setTimeout(() => {
+            if (!resolved) {
+              proc.kill('SIGKILL');
+              safeResolve({ success: false, error: `Command timed out after ${timeout}ms` });
+            }
+          }, 1000);
+        }, timeout);
+
+        // Collect stdout
+        proc.stdout?.on('data', (data: Buffer) => {
+          stdout += data.toString();
+        });
+
+        // Collect stderr
+        proc.stderr?.on('data', (data: Buffer) => {
+          stderr += data.toString();
+        });
+
+        // Handle process errors (e.g., command not found)
+        proc.on('error', (error: Error) => {
+          safeResolve({ success: false, error: error.message });
+        });
+
+        // Handle process exit
+        proc.on('close', (code: number | null, signal: string | null) => {
+          if (resolved) return;
+
+          if (signal) {
+            // Process was killed by signal (likely our timeout)
+            if (!resolved) {
+              safeResolve({
+                success: false,
+                error: `Process killed by signal: ${signal}`,
+                result: stdout.trim() || undefined,
+              });
+            }
+          } else if (code === 0) {
+            // Success
+            safeResolve({ success: true, result: stdout.trim() });
+          } else {
+            // Non-zero exit code
+            safeResolve({
+              success: false,
+              error: stderr.trim() || `Exit code: ${code}${stdout ? ` (stdout: ${stdout.substring(0, 200)})` : ''}`,
+              result: stdout.trim() || undefined,
+            });
+          }
+        });
+
+      } catch (error: any) {
+        safeResolve({ success: false, error: error.message });
       }
     });
   }

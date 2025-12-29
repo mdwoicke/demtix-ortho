@@ -37,6 +37,134 @@ function escapeCurlyBrackets(content: string): string {
   return escaped;
 }
 
+/**
+ * Robust JSON parsing for LLM responses containing code
+ * Handles common issues like unescaped characters in string values
+ */
+function parseEnhancementResponse(content: string): {
+  enhancedContent: string;
+  changes: Array<{ type: string; location: string; description: string }>;
+  reasoning: string;
+  qualityImprovements: string[];
+} | null {
+  // Extract JSON block if wrapped in markdown code fence
+  const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/);
+  let jsonContent = jsonMatch ? jsonMatch[1].trim() : content.trim();
+
+  // Try standard JSON parse first
+  try {
+    const parsed = JSON.parse(jsonContent);
+    if (parsed.enhancedContent) {
+      return {
+        enhancedContent: parsed.enhancedContent,
+        changes: parsed.changes || [],
+        reasoning: parsed.reasoning || '',
+        qualityImprovements: parsed.qualityImprovements || [],
+      };
+    }
+  } catch {
+    // Continue to fallback parsing
+  }
+
+  // Fallback: Extract fields individually using more robust patterns
+  let enhancedContent = '';
+  let changes: Array<{ type: string; location: string; description: string }> = [];
+  let reasoning = '';
+  let qualityImprovements: string[] = [];
+
+  // Extract enhancedContent - find the value between "enhancedContent": " and the next top-level field
+  // This handles multi-line strings with proper escape handling
+  const enhancedContentStart = jsonContent.indexOf('"enhancedContent"');
+  if (enhancedContentStart !== -1) {
+    // Find the opening quote of the value
+    const valueStart = jsonContent.indexOf(':"', enhancedContentStart) + 2;
+    if (valueStart > 1) {
+      // Find the closing quote by tracking escape sequences
+      let pos = valueStart;
+      let depth = 0;
+      while (pos < jsonContent.length) {
+        const char = jsonContent[pos];
+        if (char === '\\' && pos + 1 < jsonContent.length) {
+          // Skip escaped character
+          pos += 2;
+          continue;
+        }
+        if (char === '"' && depth === 0) {
+          // Found the closing quote
+          break;
+        }
+        pos++;
+      }
+
+      if (pos < jsonContent.length) {
+        const rawValue = jsonContent.substring(valueStart, pos);
+        // Unescape JSON string escapes
+        try {
+          enhancedContent = JSON.parse(`"${rawValue}"`);
+        } catch {
+          // Manual unescape for common patterns
+          enhancedContent = rawValue
+            .replace(/\\n/g, '\n')
+            .replace(/\\r/g, '\r')
+            .replace(/\\t/g, '\t')
+            .replace(/\\"/g, '"')
+            .replace(/\\\\/g, '\\');
+        }
+      }
+    }
+  }
+
+  // Extract reasoning
+  const reasoningMatch = jsonContent.match(/"reasoning"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/);
+  if (reasoningMatch) {
+    try {
+      reasoning = JSON.parse(`"${reasoningMatch[1]}"`);
+    } catch {
+      reasoning = reasoningMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+    }
+  }
+
+  // Extract changes array
+  const changesMatch = jsonContent.match(/"changes"\s*:\s*\[([\s\S]*?)\](?=\s*[,}])/);
+  if (changesMatch) {
+    try {
+      changes = JSON.parse(`[${changesMatch[1]}]`);
+    } catch {
+      // Try to extract individual change objects
+      const changePattern = /\{\s*"type"\s*:\s*"([^"]+)"\s*,\s*"location"\s*:\s*"([^"]+)"\s*,\s*"description"\s*:\s*"([^"]+)"\s*\}/g;
+      let match;
+      while ((match = changePattern.exec(changesMatch[1])) !== null) {
+        changes.push({
+          type: match[1],
+          location: match[2],
+          description: match[3],
+        });
+      }
+    }
+  }
+
+  // Extract qualityImprovements array
+  const improvementsMatch = jsonContent.match(/"qualityImprovements"\s*:\s*\[([\s\S]*?)\](?=\s*[,}]|\s*$)/);
+  if (improvementsMatch) {
+    try {
+      qualityImprovements = JSON.parse(`[${improvementsMatch[1]}]`);
+    } catch {
+      // Extract individual strings
+      const stringPattern = /"([^"]+)"/g;
+      let match;
+      while ((match = stringPattern.exec(improvementsMatch[1])) !== null) {
+        qualityImprovements.push(match[1]);
+      }
+    }
+  }
+
+  if (enhancedContent) {
+    return { enhancedContent, changes, reasoning, qualityImprovements };
+  }
+
+  return null;
+}
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -101,6 +229,14 @@ export interface ApplyEnhancementResult {
 
 const ENHANCEMENT_PROMPT = `You are an expert prompt engineer specializing in AI chatbot system prompts and function tools.
 
+## CRITICAL: COMPLETE OUTPUT REQUIRED
+**WARNING: You MUST output the COMPLETE enhanced content. Truncation will cause syntax errors and break the system.**
+- The "enhancedContent" field MUST contain the ENTIRE file content from start to finish
+- Do NOT truncate, abbreviate, or use "..." to indicate continuation
+- Do NOT say "rest of file unchanged" or similar - include ALL content
+- If the original is 500 lines, your output must be ~500 lines (plus any additions)
+- For JavaScript: The output must be syntactically valid and compile without errors
+
 ## CURRENT CONTENT
 File: {{fileKey}} ({{fileType}})
 Version: {{version}}
@@ -128,13 +264,15 @@ Version: {{version}}
 - PRESERVE all existing sections and their content unless they need modification
 - ADD new content in appropriate locations
 - For JavaScript: Ensure all functions, brackets, and syntax are valid
+- **CRITICAL: Output the COMPLETE file - never truncate**
 
 ## RESPONSE FORMAT
 You MUST respond with valid JSON only. No markdown, no explanations outside the JSON.
+The "enhancedContent" field MUST contain the COMPLETE file content - no truncation allowed.
 
 \`\`\`json
 {
-  "enhancedContent": "... full enhanced content with all original content preserved plus your additions/modifications ...",
+  "enhancedContent": "<<< COMPLETE FILE CONTENT - every single line from start to finish, with your modifications applied >>>",
   "changes": [
     {
       "type": "added|modified|removed",
@@ -270,45 +408,36 @@ ${r.keyTakeaways.map(t => `- ${t}`).join('\n')}`).join('\n\n')}`;
         .replace('{{webSearchInstruction}}', webSearchInstruction);
 
       // Call LLM with Claude Opus for highest quality
+      // Use 10 minute timeout for enhancement operations (large prompts like system_prompt need more time)
+      // Use 32000 maxTokens to ensure complete output for large files
       const llm = await this.getLLM();
       const response = await llm.execute({
         prompt,
         model: 'claude-opus-4-5-20251101',
-        maxTokens: 16000,
+        maxTokens: 32000,
         temperature: 0.3,
+        timeout: 600000, // 10 minutes for enhancement operations (large prompts need more time)
       });
 
       if (!response.success || !response.content) {
         throw new Error(response.error || 'LLM call failed');
       }
 
-      // Parse response
-      const jsonMatch = response.content.match(/```json\s*([\s\S]*?)\s*```/);
-      const jsonContent = jsonMatch ? jsonMatch[1] : response.content;
-
-      let parsed: {
-        enhancedContent: string;
-        changes: Array<{ type: string; location: string; description: string }>;
-        reasoning: string;
-        qualityImprovements: string[];
-      };
-
-      try {
-        parsed = JSON.parse(jsonContent);
-      } catch (parseError) {
-        // Try to extract just the enhanced content if JSON parsing fails
-        const contentMatch = response.content.match(/"enhancedContent"\s*:\s*"([\s\S]*?)"\s*,\s*"changes"/);
-        if (contentMatch) {
-          parsed = {
-            enhancedContent: contentMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"'),
-            changes: [],
-            reasoning: 'Enhancement applied but detailed response parsing failed',
-            qualityImprovements: [],
-          };
-        } else {
-          throw new Error('Failed to parse LLM response: ' + (parseError as Error).message);
-        }
+      // Parse response using robust parser
+      const parsed = parseEnhancementResponse(response.content);
+      if (!parsed || !parsed.enhancedContent) {
+        console.error('[AIEnhancement] Failed to parse LLM response. First 500 chars:', response.content.substring(0, 500));
+        throw new Error('Failed to parse LLM response: could not extract enhanced content');
       }
+
+      // Log parsing results for debugging
+      console.log('[AIEnhancement] Parsed response:', {
+        hasEnhancedContent: !!parsed.enhancedContent,
+        enhancedContentLength: parsed.enhancedContent.length,
+        changesCount: parsed.changes.length,
+        hasReasoning: !!parsed.reasoning,
+        qualityImprovementsCount: parsed.qualityImprovements.length,
+      });
 
       // Calculate diff
       const diff = this.calculateDiff(originalContent, parsed.enhancedContent);
@@ -507,12 +636,16 @@ ${r.keyTakeaways.map(t => `- ${t}`).join('\n')}`).join('\n\n')}`;
 
       // Escape curly brackets for Flowise compatibility
       // Single { becomes {{ and } becomes }} (already doubled brackets are preserved)
-      const escapedContent = escapeCurlyBrackets(enhancement.appliedContent);
+      // ONLY apply to markdown files - JavaScript tools must preserve original syntax
+      const isJavaScriptFile = fileKey.includes('tool') || fileKey.endsWith('.js');
+      const contentToSave = isJavaScriptFile
+        ? enhancement.appliedContent
+        : escapeCurlyBrackets(enhancement.appliedContent);
 
       // Now save to main prompt files
       const result = promptService.saveNewVersion(
         fileKey,
-        escapedContent,
+        contentToSave,
         description
       );
 
