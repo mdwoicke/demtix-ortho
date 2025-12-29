@@ -7,6 +7,8 @@ import { Request, Response, NextFunction } from 'express';
 import BetterSqlite3 from 'better-sqlite3';
 import path from 'path';
 import { spawn } from 'child_process';
+import multer from 'multer';
+import { v4 as uuidv4 } from 'uuid';
 import * as promptService from '../services/promptService';
 import * as testCaseService from '../services/testCaseService';
 import * as goalTestService from '../services/goalTestService';
@@ -14,9 +16,38 @@ import { goalSuggestionService } from '../services/goalSuggestionService';
 import { goalAnalysisService } from '../services/goalAnalysisService';
 import * as comparisonService from '../services/comparisonService';
 import { aiEnhancementService } from '../services/aiEnhancementService';
+import * as documentParserService from '../services/documentParserService';
 
 // Path to test-agent database
 const TEST_AGENT_DB_PATH = path.resolve(__dirname, '../../../test-agent/data/test-results.db');
+
+// ============================================================================
+// MULTER CONFIGURATION FOR FILE UPLOADS
+// ============================================================================
+
+const storage = multer.memoryStorage();
+export const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (_req, file, cb) => {
+    const allowedTypes = [
+      'text/plain',
+      'text/markdown',
+      'application/pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ];
+    // Also check by extension for browsers that may not set correct MIME type
+    const ext = file.originalname.toLowerCase().substring(file.originalname.lastIndexOf('.'));
+    const allowedExtensions = ['.txt', '.md', '.pdf', '.docx', '.xlsx'];
+
+    if (allowedTypes.includes(file.mimetype) || allowedExtensions.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Unsupported file type: ${file.mimetype}. Supported: .txt, .md, .pdf, .docx, .xlsx`));
+    }
+  },
+});
 
 // Store active SSE connections by runId
 const activeConnections: Map<string, Set<Response>> = new Map();
@@ -4334,6 +4365,8 @@ export async function previewEnhancement(
 
 /**
  * Enhance a prompt and save to database
+ * If enhancementId is provided, saves an existing preview (fast - no LLM call)
+ * Otherwise, runs a new enhancement from scratch
  */
 export async function enhancePrompt(
   req: Request,
@@ -4342,8 +4375,21 @@ export async function enhancePrompt(
 ): Promise<void> {
   try {
     const { fileKey } = req.params;
-    const { command, templateId, useWebSearch, sourceVersion } = req.body;
+    const { command, templateId, useWebSearch, sourceVersion, enhancementId } = req.body;
 
+    // If enhancementId is provided, save the existing preview (no LLM call needed)
+    if (enhancementId) {
+      console.log(`[EnhancePrompt] Saving existing preview: ${enhancementId}`);
+      const result = await aiEnhancementService.savePreviewedEnhancement(enhancementId);
+      res.json({
+        success: result.status === 'success',
+        data: result,
+        error: result.errorMessage,
+      });
+      return;
+    }
+
+    // Otherwise, run a new enhancement from scratch (slower - runs LLM)
     if (!command && !templateId) {
       res.status(400).json({
         success: false,
@@ -4352,6 +4398,7 @@ export async function enhancePrompt(
       return;
     }
 
+    console.log(`[EnhancePrompt] Running new enhancement for ${fileKey}`);
     const result = await aiEnhancementService.enhancePrompt({
       fileKey,
       command: command || '',
@@ -4566,4 +4613,339 @@ export async function getEnhancement(
   } catch (error) {
     next(error);
   }
+}
+
+// ============================================================================
+// REFERENCE DOCUMENT ENDPOINTS
+// ============================================================================
+
+/**
+ * Upload a reference document for a file type
+ */
+export async function uploadReferenceDocument(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { fileKey } = req.params;
+    const file = req.file;
+
+    if (!file) {
+      res.status(400).json({
+        success: false,
+        error: 'No file uploaded',
+      });
+      return;
+    }
+
+    // Validate file key
+    const validFileKeys = ['system_prompt', 'patient_tool', 'scheduling_tool'];
+    if (!validFileKeys.includes(fileKey)) {
+      res.status(400).json({
+        success: false,
+        error: `Invalid file key: ${fileKey}`,
+      });
+      return;
+    }
+
+    // Get MIME type (fallback to extension-based detection)
+    let mimeType = file.mimetype;
+    if (!documentParserService.isSupportedMimeType(mimeType)) {
+      const detectedMime = documentParserService.getMimeTypeFromExtension(file.originalname);
+      if (detectedMime) {
+        mimeType = detectedMime;
+      }
+    }
+
+    // Validate MIME type
+    if (!documentParserService.isSupportedMimeType(mimeType)) {
+      res.status(400).json({
+        success: false,
+        error: `Unsupported file type: ${mimeType}. Supported: .txt, .md, .pdf, .docx, .xlsx`,
+      });
+      return;
+    }
+
+    // Generate document ID and default label
+    const documentId = uuidv4();
+    const label = documentParserService.getDefaultLabelFromFilename(file.originalname);
+    const now = new Date().toISOString();
+
+    // Get next display order
+    const db = getTestAgentDbWritable();
+    const maxOrderRow = db.prepare(
+      'SELECT MAX(display_order) as max_order FROM reference_documents WHERE file_key = ? AND is_active = 1'
+    ).get(fileKey) as { max_order: number | null } | undefined;
+    const displayOrder = (maxOrderRow?.max_order ?? -1) + 1;
+
+    // Insert document record with pending status
+    db.prepare(`
+      INSERT INTO reference_documents (
+        document_id, file_key, label, original_filename, mime_type, file_size,
+        extraction_status, display_order, is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?, ?)
+    `).run(
+      documentId, fileKey, label, file.originalname, mimeType, file.size,
+      displayOrder, now, now
+    );
+
+    // Parse document asynchronously
+    const parseResult = await documentParserService.parseDocument(
+      file.buffer,
+      mimeType,
+      file.originalname
+    );
+
+    // Update with parse result
+    if (parseResult.success) {
+      db.prepare(`
+        UPDATE reference_documents
+        SET extracted_text = ?, extraction_status = 'success', updated_at = ?
+        WHERE document_id = ?
+      `).run(parseResult.text, new Date().toISOString(), documentId);
+    } else {
+      db.prepare(`
+        UPDATE reference_documents
+        SET extraction_status = 'failed', extraction_error = ?, updated_at = ?
+        WHERE document_id = ?
+      `).run(parseResult.error, new Date().toISOString(), documentId);
+    }
+
+    db.close();
+
+    // Return document info
+    res.status(201).json({
+      success: true,
+      data: {
+        documentId,
+        fileKey,
+        label,
+        originalFilename: file.originalname,
+        mimeType,
+        fileSize: file.size,
+        extractionStatus: parseResult.success ? 'success' : 'failed',
+        extractionError: parseResult.error,
+        displayOrder,
+        createdAt: now,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Get all reference documents for a file type
+ */
+export async function getReferenceDocuments(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { fileKey } = req.params;
+
+    const db = getTestAgentDb();
+
+    const documents = db.prepare(`
+      SELECT
+        document_id as documentId,
+        file_key as fileKey,
+        label,
+        original_filename as originalFilename,
+        mime_type as mimeType,
+        file_size as fileSize,
+        extraction_status as extractionStatus,
+        extraction_error as extractionError,
+        display_order as displayOrder,
+        is_enabled as isEnabled,
+        created_at as createdAt,
+        updated_at as updatedAt
+      FROM reference_documents
+      WHERE file_key = ? AND is_active = 1
+      ORDER BY display_order ASC
+    `).all(fileKey).map((doc: any) => ({
+      ...doc,
+      isEnabled: Boolean(doc.isEnabled), // Convert SQLite integer to boolean
+    }));
+
+    db.close();
+
+    res.json({
+      success: true,
+      data: documents,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Update a reference document (label, display order, or isEnabled)
+ */
+export async function updateReferenceDocument(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { documentId } = req.params;
+    const { label, displayOrder, isEnabled } = req.body;
+
+    const db = getTestAgentDbWritable();
+
+    // Check if document exists
+    const existing = db.prepare(
+      'SELECT id FROM reference_documents WHERE document_id = ? AND is_active = 1'
+    ).get(documentId);
+
+    if (!existing) {
+      db.close();
+      res.status(404).json({
+        success: false,
+        error: 'Document not found',
+      });
+      return;
+    }
+
+    // Build update query
+    const updates: string[] = [];
+    const params: any[] = [];
+
+    if (label !== undefined) {
+      updates.push('label = ?');
+      params.push(label);
+    }
+    if (displayOrder !== undefined) {
+      updates.push('display_order = ?');
+      params.push(displayOrder);
+    }
+    if (isEnabled !== undefined) {
+      updates.push('is_enabled = ?');
+      params.push(isEnabled ? 1 : 0);
+    }
+
+    if (updates.length === 0) {
+      db.close();
+      res.status(400).json({
+        success: false,
+        error: 'No fields to update',
+      });
+      return;
+    }
+
+    updates.push('updated_at = ?');
+    params.push(new Date().toISOString());
+    params.push(documentId);
+
+    db.prepare(`
+      UPDATE reference_documents
+      SET ${updates.join(', ')}
+      WHERE document_id = ?
+    `).run(...params);
+
+    // Get updated document
+    const updated = db.prepare(`
+      SELECT
+        document_id as documentId,
+        file_key as fileKey,
+        label,
+        original_filename as originalFilename,
+        mime_type as mimeType,
+        file_size as fileSize,
+        extraction_status as extractionStatus,
+        extraction_error as extractionError,
+        display_order as displayOrder,
+        created_at as createdAt,
+        updated_at as updatedAt
+      FROM reference_documents
+      WHERE document_id = ?
+    `).get(documentId);
+
+    db.close();
+
+    res.json({
+      success: true,
+      data: updated,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Delete a reference document (soft delete)
+ */
+export async function deleteReferenceDocument(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { documentId } = req.params;
+
+    const db = getTestAgentDbWritable();
+
+    // Check if document exists
+    const existing = db.prepare(
+      'SELECT id FROM reference_documents WHERE document_id = ? AND is_active = 1'
+    ).get(documentId);
+
+    if (!existing) {
+      db.close();
+      res.status(404).json({
+        success: false,
+        error: 'Document not found',
+      });
+      return;
+    }
+
+    // Soft delete
+    db.prepare(`
+      UPDATE reference_documents
+      SET is_active = 0, updated_at = ?
+      WHERE document_id = ?
+    `).run(new Date().toISOString(), documentId);
+
+    db.close();
+
+    res.json({
+      success: true,
+      message: 'Document deleted successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Get reference documents with extracted text for enhancement integration
+ * (Internal use - not exposed as API endpoint)
+ */
+export function getReferenceDocumentsWithText(fileKey: string): Array<{
+  documentId: string;
+  label: string;
+  extractedText: string;
+}> {
+  const db = getTestAgentDb();
+
+  const documents = db.prepare(`
+    SELECT
+      document_id as documentId,
+      label,
+      extracted_text as extractedText
+    FROM reference_documents
+    WHERE file_key = ? AND is_active = 1 AND extraction_status = 'success'
+    ORDER BY display_order ASC
+  `).all(fileKey) as Array<{
+    documentId: string;
+    label: string;
+    extractedText: string;
+  }>;
+
+  db.close();
+
+  return documents;
 }

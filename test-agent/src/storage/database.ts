@@ -175,6 +175,24 @@ export interface WebSearchResult {
   keyTakeaways: string[];
 }
 
+export interface ReferenceDocument {
+  id?: number;
+  documentId: string;
+  fileKey: string;
+  label: string;
+  originalFilename: string;
+  mimeType: string;
+  fileSize: number;
+  extractedText?: string;
+  extractionStatus: 'pending' | 'success' | 'failed';
+  extractionError?: string;
+  displayOrder: number;
+  isActive: boolean;
+  isEnabled: boolean; // Whether to include in enhancement prompts
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ============================================================================
 // GOAL-ORIENTED TEST INTERFACES
 // ============================================================================
@@ -752,6 +770,32 @@ export class Database {
 
       CREATE INDEX IF NOT EXISTS idx_ai_templates_category ON ai_enhancement_templates(category);
       CREATE INDEX IF NOT EXISTS idx_ai_templates_built_in ON ai_enhancement_templates(is_built_in);
+
+      -- ========================================================================
+      -- REFERENCE DOCUMENTS TABLE
+      -- ========================================================================
+
+      -- Reference Documents: Store supporting documents for AI enhancement context
+      CREATE TABLE IF NOT EXISTS reference_documents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id TEXT UNIQUE NOT NULL,
+        file_key TEXT NOT NULL,
+        label TEXT NOT NULL,
+        original_filename TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        file_size INTEGER NOT NULL,
+        extracted_text TEXT,
+        extraction_status TEXT CHECK(extraction_status IN ('pending', 'success', 'failed')) DEFAULT 'pending',
+        extraction_error TEXT,
+        display_order INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (file_key) REFERENCES prompt_working_copies(file_key)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ref_docs_file_key ON reference_documents(file_key);
+      CREATE INDEX IF NOT EXISTS idx_ref_docs_active ON reference_documents(is_active);
     `);
 
     // Migration: Add agent_question column if it doesn't exist
@@ -787,6 +831,9 @@ export class Database {
 
     // Migration: Update CHECK constraint to include 'applied' and 'promoted' statuses
     this.migrateEnhancementHistoryCheckConstraint();
+
+    // Migration: Add is_enabled field to reference_documents (for selective inclusion in enhancements)
+    this.addColumnIfNotExists('reference_documents', 'is_enabled', 'INTEGER DEFAULT 1');
 
     // Initialize built-in enhancement templates
     this.initializeBuiltInTemplates();
@@ -3573,6 +3620,38 @@ export class Database {
       promotedAt: row.promoted_at,
       appliedContent: row.applied_content,
     };
+  }
+
+  // ============================================================================
+  // REFERENCE DOCUMENT METHODS
+  // ============================================================================
+
+  /**
+   * Get reference documents with extracted text for a file key
+   * Used by AI enhancement service to include reference context in prompts
+   */
+  getReferenceDocumentsForEnhancement(fileKey: string): Array<{
+    documentId: string;
+    label: string;
+    extractedText: string;
+  }> {
+    const db = this.getDb();
+
+    const documents = db.prepare(`
+      SELECT
+        document_id as documentId,
+        label,
+        extracted_text as extractedText
+      FROM reference_documents
+      WHERE file_key = ? AND is_active = 1 AND is_enabled = 1 AND extraction_status = 'success'
+      ORDER BY display_order ASC
+    `).all(fileKey) as Array<{
+      documentId: string;
+      label: string;
+      extractedText: string;
+    }>;
+
+    return documents;
   }
 
   /**

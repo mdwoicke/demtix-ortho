@@ -239,3 +239,55 @@ export const FILE_KEY_DISPLAY_NAMES: Record<string, string> = {
   'scheduling_tool': 'Scheduling Tool',
   'patient_tool': 'Patient Tool',
 };
+
+// ============================================================================
+// REFERENCE DOCUMENT TYPES
+// ============================================================================
+
+/**
+ * Reference document for enhancement context
+ */
+export interface ReferenceDocument {
+  documentId: string;
+  fileKey: string;
+  label: string;
+  originalFilename: string;
+  mimeType: string;
+  fileSize: number;
+  extractionStatus: 'pending' | 'success' | 'failed';
+  extractionError?: string;
+  displayOrder: number;
+  isEnabled: boolean; // Whether to include in enhancement prompts
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Request to update a reference document
+ */
+export interface UpdateReferenceDocumentRequest {
+  label?: string;
+  displayOrder?: number;
+  isEnabled?: boolean;
+}
+
+/**
+ * Supported MIME types for reference documents
+ */
+export const SUPPORTED_REFERENCE_MIME_TYPES: Record<string, string> = {
+  'text/plain': '.txt',
+  'text/markdown': '.md',
+  'application/pdf': '.pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+};
+
+/**
+ * Supported file extensions for reference documents
+ */
+export const SUPPORTED_REFERENCE_EXTENSIONS = ['.txt', '.md', '.pdf', '.docx', '.xlsx'];
+
+/**
+ * Maximum file size for reference documents (5MB)
+ */
+export const MAX_REFERENCE_FILE_SIZE = 5 * 1024 * 1024;

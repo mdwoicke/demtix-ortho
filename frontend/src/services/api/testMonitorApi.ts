@@ -1021,6 +1021,8 @@ import type {
   EnhancementHistory,
   ApplyEnhancementResult,
   QualityScore,
+  ReferenceDocument,
+  UpdateReferenceDocumentRequest,
 } from '../../types/aiPrompting.types';
 
 /**
@@ -1158,4 +1160,72 @@ export async function getEnhancement(
     `/test-monitor/enhancements/${enhancementId}`
   );
   return response.data;
+}
+
+// ============================================================================
+// REFERENCE DOCUMENT API
+// ============================================================================
+
+/**
+ * Upload a reference document for a file type
+ */
+export async function uploadReferenceDocument(
+  fileKey: string,
+  file: File
+): Promise<ReferenceDocument> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(
+    `${API_BASE_URL}/test-monitor/prompts/${fileKey}/references`,
+    {
+      method: 'POST',
+      body: formData,
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || `Upload failed: ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  return data.data;
+}
+
+/**
+ * Get all reference documents for a file type
+ */
+export async function getReferenceDocuments(
+  fileKey: string
+): Promise<ReferenceDocument[]> {
+  const response = await get<TestMonitorApiResponse<ReferenceDocument[]>>(
+    `/test-monitor/prompts/${fileKey}/references`
+  );
+  return response.data;
+}
+
+/**
+ * Update a reference document (label or display order)
+ */
+export async function updateReferenceDocument(
+  documentId: string,
+  updates: UpdateReferenceDocumentRequest
+): Promise<ReferenceDocument> {
+  const response = await put<TestMonitorApiResponse<ReferenceDocument>>(
+    `/test-monitor/references/${documentId}`,
+    updates
+  );
+  return response.data;
+}
+
+/**
+ * Delete a reference document
+ */
+export async function deleteReferenceDocument(
+  documentId: string
+): Promise<void> {
+  await fetch(`${API_BASE_URL}/test-monitor/references/${documentId}`, {
+    method: 'DELETE',
+  });
 }

@@ -9,10 +9,12 @@ import type {
   EnhancementTemplate,
   EnhancementHistory,
   QualityScore,
+  ReferenceDocument,
 } from '../../types/aiPrompting.types';
 import {
   FILE_KEY_DISPLAY_NAMES,
 } from '../../types/aiPrompting.types';
+import ReferenceDocuments from '../../components/features/aiPrompting/ReferenceDocuments';
 import type { PromptFile, PromptVersionHistory, PromptContent } from '../../types/testMonitor.types';
 import * as testMonitorApi from '../../services/api/testMonitorApi';
 
@@ -62,6 +64,63 @@ const formatTimeAgo = (dateStr: string) => {
   if (diffHours < 24) return `${diffHours}h ago`;
   if (diffDays < 7) return `${diffDays}d ago`;
   return date.toLocaleDateString();
+};
+
+/**
+ * AI Loading Animation Component - Professional animated loader for AI operations
+ */
+const AILoadingAnimation: React.FC<{
+  message?: string;
+  subMessage?: string;
+}> = ({ message = 'Analyzing and optimizing...', subMessage }) => {
+  return (
+    <div className="flex flex-col items-center justify-center py-12">
+      {/* Animated AI Icon Container */}
+      <div className="relative w-24 h-24 mb-6">
+        {/* Outer rotating ring */}
+        <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-purple-500 border-r-blue-500 animate-spin" style={{ animationDuration: '3s' }}></div>
+
+        {/* Middle pulsing ring */}
+        <div className="absolute inset-2 rounded-full border border-purple-300 dark:border-purple-700 animate-pulse"></div>
+
+        {/* Inner gradient background */}
+        <div className="absolute inset-4 rounded-full bg-gradient-to-br from-purple-500 via-blue-500 to-indigo-600 opacity-20 animate-pulse"></div>
+
+        {/* Center brain/AI icon */}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <svg className="w-10 h-10 text-purple-600 dark:text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+          </svg>
+        </div>
+
+        {/* Orbiting dots */}
+        <div className="absolute inset-0 animate-spin" style={{ animationDuration: '4s' }}>
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-2 h-2 bg-purple-500 rounded-full"></div>
+        </div>
+        <div className="absolute inset-0 animate-spin" style={{ animationDuration: '4s', animationDelay: '1.33s' }}>
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-2 h-2 bg-blue-500 rounded-full"></div>
+        </div>
+        <div className="absolute inset-0 animate-spin" style={{ animationDuration: '4s', animationDelay: '2.66s' }}>
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-2 h-2 bg-indigo-500 rounded-full"></div>
+        </div>
+      </div>
+
+      {/* Text content */}
+      <div className="text-center space-y-2">
+        <p className="text-lg font-medium bg-gradient-to-r from-purple-600 via-blue-600 to-indigo-600 dark:from-purple-400 dark:via-blue-400 dark:to-indigo-400 bg-clip-text text-transparent animate-pulse">
+          {message}
+        </p>
+        {subMessage && (
+          <p className="text-sm text-gray-500 dark:text-gray-400 flex items-center justify-center gap-2">
+            <span className="inline-block w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+            <span className="inline-block w-1.5 h-1.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+            <span className="inline-block w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+            <span className="ml-1">{subMessage}</span>
+          </p>
+        )}
+      </div>
+    </div>
+  );
 };
 
 /**
@@ -1329,6 +1388,9 @@ const AIPromptingPage: React.FC = () => {
   const [isPreviewPopoutOpen, setIsPreviewPopoutOpen] = useState(false);
   const [isDetailsPopoutOpen, setIsDetailsPopoutOpen] = useState(false);
   const [isContentPopoutOpen, setIsContentPopoutOpen] = useState(false);
+  // Reference documents state
+  const [referenceDocs, setReferenceDocs] = useState<ReferenceDocument[]>([]);
+  const [referenceDocsLoading, setReferenceDocsLoading] = useState(false);
 
   // Load initial data
   useEffect(() => {
@@ -1342,6 +1404,7 @@ const AIPromptingPage: React.FC = () => {
       loadVersionHistory();
       loadEnhancementHistory();
       loadPromptContent(); // Load content when file changes
+      loadReferenceDocs(); // Load reference documents for file
       // Clear any stale enhancement selection when switching files
       setSelectedEnhancementId(null);
       setSelectedEnhancementDetails(null);
@@ -1438,6 +1501,63 @@ const AIPromptingPage: React.FC = () => {
       console.error('Failed to load quality score:', err);
     } finally {
       setQualityScoreLoading(false);
+    }
+  };
+
+  // Reference documents handlers
+  const loadReferenceDocs = async () => {
+    if (!selectedFileKey) return;
+    setReferenceDocsLoading(true);
+    try {
+      const docs = await testMonitorApi.getReferenceDocuments(selectedFileKey);
+      setReferenceDocs(docs);
+    } catch (err) {
+      console.error('Failed to load reference documents:', err);
+    } finally {
+      setReferenceDocsLoading(false);
+    }
+  };
+
+  const handleUploadReferenceDoc = async (file: File) => {
+    if (!selectedFileKey) return;
+    try {
+      await testMonitorApi.uploadReferenceDocument(selectedFileKey, file);
+      await loadReferenceDocs();
+      setSuccessMessage(`Uploaded ${file.name}`);
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (err) {
+      console.error('Failed to upload reference document:', err);
+      setError(`Failed to upload ${file.name}`);
+    }
+  };
+
+  const handleDeleteReferenceDoc = async (documentId: string) => {
+    try {
+      await testMonitorApi.deleteReferenceDocument(documentId);
+      await loadReferenceDocs();
+    } catch (err) {
+      console.error('Failed to delete reference document:', err);
+      setError('Failed to delete document');
+    }
+  };
+
+  const handleToggleReferenceDocEnabled = async (documentId: string, isEnabled: boolean) => {
+    try {
+      await testMonitorApi.updateReferenceDocument(documentId, { isEnabled });
+      await loadReferenceDocs();
+    } catch (err) {
+      console.error('Failed to toggle reference document:', err);
+      setError('Failed to toggle document');
+    }
+  };
+
+  const handleUpdateReferenceDocLabel = async (documentId: string, label: string) => {
+    try {
+      await testMonitorApi.updateReferenceDocument(documentId, { label });
+      await loadReferenceDocs();
+    } catch (err) {
+      console.error('Failed to update reference document label:', err);
+      setError('Failed to update document label');
     }
   };
 
@@ -1619,7 +1739,16 @@ const AIPromptingPage: React.FC = () => {
   // Handle discarding an enhancement from the list
   const handleDiscardEnhancement = async (enhancementId: string) => {
     try {
-      // For now, just remove from local state - could add API to discard
+      // Find the enhancement to get its fileKey
+      const enhancement = enhancementHistory.find(e => e.enhancementId === enhancementId);
+      if (!enhancement) {
+        throw new Error('Enhancement not found');
+      }
+
+      // Call API to persist the discard
+      await testMonitorApi.discardEnhancement(enhancement.fileKey, enhancementId);
+
+      // Update local state
       setEnhancementHistory(prev =>
         prev.map(e => e.enhancementId === enhancementId
           ? { ...e, status: 'cancelled' as const }
@@ -1680,6 +1809,19 @@ const AIPromptingPage: React.FC = () => {
             loading={filesLoading}
             onSelectFile={setSelectedFileKey}
           />
+
+          {/* Reference Documents for selected file */}
+          {selectedFileKey && (
+            <ReferenceDocuments
+              fileKey={selectedFileKey}
+              documents={referenceDocs}
+              loading={referenceDocsLoading}
+              onUpload={handleUploadReferenceDoc}
+              onDelete={handleDeleteReferenceDoc}
+              onToggleEnabled={handleToggleReferenceDocEnabled}
+              onUpdateLabel={handleUpdateReferenceDocLabel}
+            />
+          )}
 
           {/* Divider */}
           <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
@@ -1826,20 +1968,14 @@ const AIPromptingPage: React.FC = () => {
         <div className="flex-1 overflow-y-auto p-6 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
           {isPreviewLoading ? (
             <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                <p className="text-gray-500 dark:text-gray-400">Generating enhancement with Claude Opus...</p>
-                {useWebSearch && (
-                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Searching for best practices...</p>
-                )}
-              </div>
+              <AILoadingAnimation
+                message="Generating Optimizations..."
+                subMessage={useWebSearch ? 'Searching for best practices' : undefined}
+              />
             </div>
           ) : enhancementDetailsLoading ? (
             <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
-                <p className="text-gray-500 dark:text-gray-400">Loading enhancement details...</p>
-              </div>
+              <AILoadingAnimation message="Loading enhancement details..." />
             </div>
           ) : selectedEnhancementDetails ? (
             <div className="space-y-6">

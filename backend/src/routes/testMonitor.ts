@@ -304,4 +304,24 @@ router.get('/prompts/:fileKey/quality-score', testMonitorController.getQualitySc
 // GET /api/test-monitor/enhancements/:enhancementId - Get enhancement by ID
 router.get('/enhancements/:enhancementId', testMonitorController.getEnhancement);
 
+// ============================================================================
+// REFERENCE DOCUMENT ROUTES
+// ============================================================================
+
+// POST /api/test-monitor/prompts/:fileKey/references - Upload reference document
+router.post(
+  '/prompts/:fileKey/references',
+  testMonitorController.upload.single('file'),
+  testMonitorController.uploadReferenceDocument
+);
+
+// GET /api/test-monitor/prompts/:fileKey/references - Get reference documents
+router.get('/prompts/:fileKey/references', testMonitorController.getReferenceDocuments);
+
+// PUT /api/test-monitor/references/:documentId - Update reference document
+router.put('/references/:documentId', testMonitorController.updateReferenceDocument);
+
+// DELETE /api/test-monitor/references/:documentId - Delete reference document
+router.delete('/references/:documentId', testMonitorController.deleteReferenceDocument);
+
 export default router;

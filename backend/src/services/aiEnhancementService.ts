@@ -349,13 +349,16 @@ Version: {{version}}
 
 {{webSearchSection}}
 
+{{referenceDocumentsSection}}
+
 ## YOUR TASK
 1. Analyze the current prompt/tool content carefully
 2. Apply the user's enhancement request thoughtfully
 3. {{webSearchInstruction}}
-4. Maintain consistency with existing style and format
-5. For JavaScript tools: Ensure valid syntax - the code must compile without errors
-6. For prompts: Maintain XML structure if present, preserve section markers
+4. {{referenceDocumentsInstruction}}
+5. Maintain consistency with existing style and format
+6. For JavaScript tools: Ensure valid syntax - the code must compile without errors
+7. For prompts: Maintain XML structure if present, preserve section markers
 
 ## IMPORTANT RULES
 - DO NOT remove existing functionality unless explicitly asked
@@ -434,6 +437,17 @@ export class AIEnhancementService {
   }
 
   /**
+   * Get reference documents for a file key (for inclusion in enhancement prompt)
+   */
+  private getReferenceDocuments(fileKey: string): Array<{
+    documentId: string;
+    label: string;
+    extractedText: string;
+  }> {
+    return this.db.getReferenceDocumentsForEnhancement(fileKey);
+  }
+
+  /**
    * Preview an enhancement and save to DB with status "preview"
    * Returns enhancementId so it can be confirmed later without re-running LLM
    */
@@ -508,6 +522,22 @@ ${r.keyTakeaways.map(t => `- ${t}`).join('\n')}`).join('\n\n')}`;
         }
       }
 
+      // Fetch reference documents for this file
+      let referenceDocumentsSection = '';
+      let referenceDocumentsInstruction = 'Follow any guidelines from reference documents';
+      const referenceDocuments = this.getReferenceDocuments(request.fileKey);
+
+      if (referenceDocuments.length > 0) {
+        referenceDocumentsSection = `## REFERENCE DOCUMENTS
+The following documents provide context, requirements, and guidelines for this file:
+
+${referenceDocuments.map(doc => `### ${doc.label}
+<reference_document name="${doc.label}">
+${doc.extractedText}
+</reference_document>`).join('\n\n')}`;
+        referenceDocumentsInstruction = 'Apply requirements, patterns, and guidelines from the reference documents where relevant';
+      }
+
       // Determine file type and language
       const fileType = request.fileKey.includes('tool') ? 'JavaScript Tool' : 'System Prompt';
       const language = request.fileKey.includes('tool') ? 'javascript' : 'markdown';
@@ -521,7 +551,9 @@ ${r.keyTakeaways.map(t => `- ${t}`).join('\n')}`).join('\n\n')}`;
         .replace('{{content}}', originalContent)
         .replace('{{command}}', command)
         .replace('{{webSearchSection}}', webSearchSection)
-        .replace('{{webSearchInstruction}}', webSearchInstruction);
+        .replace('{{webSearchInstruction}}', webSearchInstruction)
+        .replace('{{referenceDocumentsSection}}', referenceDocumentsSection)
+        .replace('{{referenceDocumentsInstruction}}', referenceDocumentsInstruction);
 
       // Call LLM with Claude Opus for highest quality
       // Use 10 minute timeout for enhancement operations (large prompts like system_prompt need more time)
