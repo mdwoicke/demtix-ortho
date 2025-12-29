@@ -29,37 +29,58 @@ type FixCategory = 'prompt' | 'tool' | 'test-agent';
 
 /**
  * Categorize a fix by its target file path
- * - prompt: Flowise system prompts (docs/Chord_Cloud9_SystemPrompt*.md)
- * - tool: Flowise tools (docs/chord_dso_*.js)
- * - test-agent: Test agent code (test-agent/src/*)
+ *
+ * STRICT MATCHING: Only these 3 Flowise files are tracked:
+ * - System Prompt: docs/Chord_Cloud9_SystemPrompt*.md or "system_prompt"
+ * - Scheduling Tool: docs/chord_dso_scheduling*.js or "scheduling_tool"
+ * - Patient Tool: docs/chord_dso_patient*.js or "patient_tool"
+ *
+ * Everything else is test-agent code.
  */
 function getFixCategory(targetFile: string): FixCategory {
   const normalized = targetFile.toLowerCase();
 
-  // Flowise system prompts - check various patterns
+  // =====================================================
+  // FLOWISE SYSTEM PROMPT - Only these exact patterns
+  // =====================================================
   if (
-    normalized.includes('systemprompt') ||          // SystemPrompt.md
-    normalized.includes('system prompt') ||          // "System prompt (Flowise..."
-    normalized.includes('systemmessage') ||          // toolAgent_0.systemMessage
-    (normalized.endsWith('.md') && !normalized.includes('test-agent'))
+    // Exact file references
+    normalized.includes('chord_cloud9_systemprompt') ||  // docs/Chord_Cloud9_SystemPrompt*.md
+    // Canonical name from prompt_versions table
+    normalized === 'system_prompt' ||
+    normalized.startsWith('system_prompt') ||            // system_prompt.md, system_prompt (Flowise...)
+    // Text description patterns
+    (normalized.startsWith('system prompt') && normalized.includes('flowise')) ||
+    // Flowise internal reference
+    normalized.includes('toolagent_0.systemmessage') ||
+    normalized.includes('systemmessage')
   ) {
     return 'prompt';
   }
 
-  // Flowise tools - DSO scheduling/patient tools (BOTH .js AND .json)
+  // =====================================================
+  // FLOWISE TOOLS - Only scheduling and patient DSO tools
+  // =====================================================
   if (
-    normalized.includes('chord_dso') ||
-    (normalized.includes('docs/') && (normalized.endsWith('.js') || normalized.endsWith('.json')))
+    // Scheduling tool patterns
+    normalized.includes('chord_dso_scheduling') ||      // docs/chord_dso_scheduling*.js
+    normalized === 'scheduling_tool' ||                  // Canonical name
+    // Patient tool patterns
+    normalized.includes('chord_dso_patient') ||         // docs/chord_dso_patient*.js
+    normalized === 'patient_tool'                        // Canonical name
   ) {
     return 'tool';
   }
 
-  // Test agent code
-  if (normalized.includes('test-agent/') || normalized.includes('test-cases/')) {
-    return 'test-agent';
-  }
-
-  return 'prompt'; // Default to prompt for bot-related fixes
+  // =====================================================
+  // EVERYTHING ELSE IS TEST-AGENT
+  // =====================================================
+  // This includes:
+  // - test-agent/src/* files
+  // - src/tests/* files
+  // - Generic file references like "test configuration"
+  // - Other .js/.md files that aren't the specific Flowise files above
+  return 'test-agent';
 }
 
 // Category styling configuration
