@@ -5,7 +5,7 @@
 
 import BetterSqlite3 from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
-import { config } from '../config/config';
+// config import removed - not currently used
 import { ConversationTurn, Finding } from '../tests/test-case';
 import { Recommendation } from '../analysis/recommendation-engine';
 import * as fs from 'fs';

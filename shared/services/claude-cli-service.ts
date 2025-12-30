@@ -244,7 +244,6 @@ export class ClaudeCliService {
     pipeFromFile?: string // Optional file path to pipe content from via stdin
   ): Promise<{ success: boolean; result?: string; error?: string }> {
     return new Promise((resolve) => {
-      const isWindows = process.platform === 'win32';
       let stdout = '';
       let stderr = '';
       let timeoutId: NodeJS.Timeout | null = null;
