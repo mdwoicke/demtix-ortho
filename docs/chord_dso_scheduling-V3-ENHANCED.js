@@ -34,9 +34,10 @@ const CLOUD9 = {
 // ============================================================================
 
 const STEPWISE_CONFIG = {
-    maxAttempts: 3,
+    maxAttempts: 2,           // Reduced from 3 to fit within timeout budget
     expansionDays: 10,
-    maxRangeDays: 196
+    maxRangeDays: 196,
+    requestTimeoutMs: 25000   // 25s per request (allows 2 attempts within 60s budget)
 };
 
 // ============================================================================
@@ -334,24 +335,36 @@ function validateAndCorrectDates(startDateStr, endDateStr) {
 
 async function callCloud9WithRetry(procedure, apiParams, attempt = 1) {
     const xmlRequest = buildXmlRequest(procedure, apiParams);
-    console.log(`[chord_scheduling_v3] ${procedure} attempt ${attempt}/3`);
+    const maxAttempts = 2;  // Allow 2 attempts max to stay within timeout budget
+    console.log(`[chord_scheduling_v3] ${procedure} attempt ${attempt}/${maxAttempts}`);
 
     try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), STEPWISE_CONFIG.requestTimeoutMs);
+
         const response = await fetch(CLOUD9.endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/xml' },
             body: xmlRequest,
-            timeout: 45000
+            signal: controller.signal
         });
+
+        clearTimeout(timeoutId);
         const xmlText = await response.text();
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return parseXmlResponse(xmlText);
     } catch (error) {
-        if (attempt < 3 && ['ETIMEDOUT', 'ECONNRESET', 'timeout'].some(e =>
-            error.message.toLowerCase().includes(e.toLowerCase()))) {
+        const isRetryable = ['ETIMEDOUT', 'ECONNRESET', 'timeout', 'aborted', 'abort'].some(e =>
+            error.message.toLowerCase().includes(e.toLowerCase()));
+
+        if (attempt < maxAttempts && isRetryable) {
+            console.log(`[chord_scheduling_v3] Retrying ${procedure} after ${1000 * attempt}ms`);
             await new Promise(r => setTimeout(r, 1000 * attempt));
             return callCloud9WithRetry(procedure, apiParams, attempt + 1);
         }
+
+        // Return graceful error instead of throwing
+        console.error(`[chord_scheduling_v3] ${procedure} failed after ${attempt} attempts: ${error.message}`);
         throw error;
     }
 }
@@ -363,6 +376,7 @@ async function callCloud9WithRetry(procedure, apiParams, attempt = 1) {
 async function searchSlotsWithExpansion(startDate, endDate) {
     let currentEndDate = endDate;
     let attempt = 0;
+    let lastError = null;
 
     while (attempt < STEPWISE_CONFIG.maxAttempts) {
         attempt++;
@@ -387,19 +401,34 @@ async function searchSlotsWithExpansion(startDate, endDate) {
                 };
             }
 
-            // Expand and retry
+            // Expand and retry if no slots found
             currentEndDate = addDays(currentEndDate, STEPWISE_CONFIG.expansionDays);
         } catch (error) {
+            lastError = error;
+            console.error(`[chord_scheduling_v3] Slot search error on attempt ${attempt}: ${error.message}`);
+
+            // On any error, return immediately with transfer guidance
+            // (callCloud9WithRetry already handles retries internally)
+            const isTimeout = ['timeout', 'aborted', 'ETIMEDOUT', 'ECONNRESET'].some(e =>
+                error.message.toLowerCase().includes(e.toLowerCase()));
+
             return {
                 success: false,
                 records: [],
                 attempts: attempt,
-                error: error.message
+                errorType: isTimeout ? 'timeout' : 'api_error',
+                // Note: error message NOT included to prevent LLM from exposing it
+                shouldTransfer: true
             };
         }
     }
 
-    return { success: false, records: [], attempts: attempt };
+    return {
+        success: false,
+        records: [],
+        attempts: attempt,
+        shouldTransfer: attempt >= STEPWISE_CONFIG.maxAttempts
+    };
 }
 
 // ============================================================================
@@ -444,7 +473,27 @@ async function executeRequest() {
                         expanded: result.expanded,
                         llm_guidance: createLlmGuidance('slots_found', { firstSlot })
                     });
+                } else if (result.shouldTransfer || result.errorType) {
+                    // Error occurred - guide LLM to transfer gracefully
+                    return JSON.stringify({
+                        slots: [],
+                        count: 0,
+                        attempts: result.attempts,
+                        llm_guidance: {
+                            ...createLlmGuidance('slots_not_found', { attempts: STEPWISE_CONFIG.maxAttempts }),
+                            action_required: "transfer_to_agent",
+                            voice_response: "I want to connect you with a specialist who can assist you. One moment while I transfer your call.",
+                            transfer_reason: result.errorType || "no_slots_after_retries",
+                            // CRITICAL: Prevent LLM from mentioning the error
+                            CRITICAL: "Do NOT mention error, timeout, or technical problems. Transfer gracefully without explanation.",
+                            prohibited_responses: [
+                                "error", "timeout", "problem", "issue", "technical",
+                                "system", "down", "difficulties", "went wrong"
+                            ]
+                        }
+                    });
                 } else {
+                    // No slots found but no error - offer to check more dates
                     return JSON.stringify({
                         slots: [],
                         count: 0,
@@ -517,9 +566,29 @@ async function executeRequest() {
         }
     } catch (error) {
         console.error(`[chord_scheduling_v3] Error:`, error.message);
+
+        // Determine if this was a timeout/network error
+        const isTimeout = ['timeout', 'aborted', 'ETIMEDOUT', 'ECONNRESET'].some(e =>
+            error.message.toLowerCase().includes(e.toLowerCase()));
+
+        // Return graceful guidance - NEVER expose raw error to caller
         return JSON.stringify({
-            error: error.message,
-            llm_guidance: createLlmGuidance('booking_failed', { canRetry: false })
+            success: false,
+            // Do NOT include raw error message - LLM should not expose this
+            llm_guidance: {
+                ...createLlmGuidance('booking_failed', { canRetry: false }),
+                error_type: isTimeout ? 'timeout' : 'api_error',
+                // Critical: Instruct LLM to handle gracefully
+                voice_response: "I want to connect you with a specialist who can assist you. One moment while I transfer your call.",
+                action_required: "transfer_to_agent",
+                transfer_reason: isTimeout ? "scheduling_timeout" : "api_failure",
+                // Explicit instruction to prevent error output
+                CRITICAL: "Do NOT mention error, timeout, or system problems to caller. Transfer gracefully.",
+                prohibited_responses: [
+                    "error", "timeout", "problem", "issue", "failed",
+                    "system is down", "technical difficulties", "something went wrong"
+                ]
+            }
         });
     }
 }

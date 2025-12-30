@@ -639,6 +639,10 @@ export function applyFix(fileKey: string, fixId: string): { newVersion: number; 
       validation.warnings.forEach(warn => console.warn(`  - ${warn}`));
     }
 
+    // Escape curly braces for Flowise compatibility (only for non-JS files like system_prompt)
+    const isJavaScriptFile = fileKey.includes('tool') || fileKey.endsWith('.js');
+    const contentToSave = !isJavaScriptFile ? escapeForFlowise(mergedContent) : mergedContent;
+
     // Get next sequential version (ensures no duplicates)
     const newVersion = getNextVersion(db, fileKey);
     const now = new Date().toISOString();
@@ -648,13 +652,13 @@ export function applyFix(fileKey: string, fixId: string): { newVersion: number; 
       UPDATE prompt_working_copies
       SET content = ?, version = ?, last_fix_id = ?, updated_at = ?
       WHERE file_key = ?
-    `).run(mergedContent, newVersion, fixId, now, fileKey);
+    `).run(contentToSave, newVersion, fixId, now, fileKey);
 
     // Create version history entry
     db.prepare(`
       INSERT INTO prompt_version_history (file_key, version, content, fix_id, change_description, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(fileKey, newVersion, mergedContent, fixId, fix.change_description, now);
+    `).run(fileKey, newVersion, contentToSave, fixId, fix.change_description, now);
 
     // Update fix status to 'applied'
     db.prepare(`
@@ -663,7 +667,7 @@ export function applyFix(fileKey: string, fixId: string): { newVersion: number; 
 
     return {
       newVersion,
-      content: mergedContent,
+      content: contentToSave,
       warnings: validation.warnings.length > 0 ? validation.warnings : undefined,
     };
   } finally {
@@ -1019,6 +1023,10 @@ export function saveNewVersion(
       );
     }
 
+    // Escape curly braces for Flowise compatibility (only for non-JS files like system_prompt)
+    const isJavaScriptFile = fileKey.includes('tool') || fileKey.endsWith('.js');
+    const contentToSave = !isJavaScriptFile ? escapeForFlowise(content) : content;
+
     // Get next sequential version (ensures no duplicates)
     const newVersion = getNextVersion(db, fileKey);
     const now = new Date().toISOString();
@@ -1028,17 +1036,17 @@ export function saveNewVersion(
       UPDATE prompt_working_copies
       SET content = ?, version = ?, updated_at = ?
       WHERE file_key = ?
-    `).run(content, newVersion, now, fileKey);
+    `).run(contentToSave, newVersion, now, fileKey);
 
     // Create version history entry
     db.prepare(`
       INSERT INTO prompt_version_history (file_key, version, content, fix_id, change_description, created_at)
       VALUES (?, ?, ?, NULL, ?, ?)
-    `).run(fileKey, newVersion, content, changeDescription, now);
+    `).run(fileKey, newVersion, contentToSave, changeDescription, now);
 
     return {
       newVersion,
-      content,
+      content: contentToSave,
       warnings: validation.warnings.length > 0 ? validation.warnings : undefined,
     };
   } finally {
@@ -1551,4 +1559,135 @@ export function getVersionDiff(
     removedLines,
     changedLines: Math.min(addedLines, removedLines),
   };
+}
+
+// ============================================================================
+// QUALITY SCORE CACHING
+// ============================================================================
+
+/**
+ * Initialize the quality scores cache table if it doesn't exist
+ */
+function ensureQualityScoreTable(db: BetterSqlite3.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS prompt_quality_scores (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      file_key TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      overall_score REAL NOT NULL,
+      dimensions_json TEXT NOT NULL,
+      suggestions_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(file_key, version)
+    )
+  `);
+}
+
+/**
+ * Quality score structure
+ */
+export interface CachedQualityScore {
+  overall: number;
+  dimensions: {
+    clarity: number;
+    completeness: number;
+    examples: number;
+    consistency: number;
+    edgeCases: number;
+  };
+  suggestions: string[];
+}
+
+/**
+ * Get cached quality score for a prompt version
+ * @returns The cached score or null if not found
+ */
+export function getCachedQualityScore(
+  fileKey: string,
+  version: number
+): CachedQualityScore | null {
+  const db = getWritableDb();
+
+  try {
+    ensureQualityScoreTable(db);
+
+    const row = db.prepare(`
+      SELECT overall_score, dimensions_json, suggestions_json
+      FROM prompt_quality_scores
+      WHERE file_key = ? AND version = ?
+    `).get(fileKey, version) as {
+      overall_score: number;
+      dimensions_json: string;
+      suggestions_json: string;
+    } | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      overall: row.overall_score,
+      dimensions: JSON.parse(row.dimensions_json),
+      suggestions: JSON.parse(row.suggestions_json),
+    };
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Save quality score to cache
+ */
+export function saveQualityScoreToCache(
+  fileKey: string,
+  version: number,
+  score: CachedQualityScore
+): void {
+  const db = getWritableDb();
+
+  try {
+    ensureQualityScoreTable(db);
+
+    const now = new Date().toISOString();
+
+    db.prepare(`
+      INSERT OR REPLACE INTO prompt_quality_scores
+      (file_key, version, overall_score, dimensions_json, suggestions_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      fileKey,
+      version,
+      score.overall,
+      JSON.stringify(score.dimensions),
+      JSON.stringify(score.suggestions),
+      now
+    );
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Clear cached quality scores for a file (e.g., when content changes)
+ */
+export function clearQualityScoreCache(fileKey: string, version?: number): void {
+  const db = getWritableDb();
+
+  try {
+    ensureQualityScoreTable(db);
+
+    if (version !== undefined) {
+      db.prepare(`
+        DELETE FROM prompt_quality_scores
+        WHERE file_key = ? AND version = ?
+      `).run(fileKey, version);
+    } else {
+      db.prepare(`
+        DELETE FROM prompt_quality_scores
+        WHERE file_key = ?
+      `).run(fileKey);
+    }
+  } finally {
+    db.close();
+  }
 }
