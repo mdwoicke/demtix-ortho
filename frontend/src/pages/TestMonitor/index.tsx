@@ -7,13 +7,15 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { ROUTES } from '../../utils/constants';
 
 const tabs = [
-  { name: 'Dashboard', path: ROUTES.TEST_MONITOR_DASHBOARD, exact: true },
-  { name: 'Test Cases', path: ROUTES.TEST_MONITOR_CASES },
-  { name: 'Goal Tests', path: ROUTES.TEST_MONITOR_GOAL_CASES },
+  // { name: 'Dashboard', path: ROUTES.TEST_MONITOR_DASHBOARD, exact: true },
+  // { name: 'Test Cases', path: ROUTES.TEST_MONITOR_CASES },
+  { name: 'Goal Tests', path: ROUTES.TEST_MONITOR_GOAL_CASES, exact: true },
   { name: 'Goal Test Generator', path: ROUTES.TEST_MONITOR_CREATE },
   { name: 'History', path: ROUTES.TEST_MONITOR_HISTORY },
   { name: 'Tuning', path: ROUTES.TEST_MONITOR_TUNING },
   { name: 'A/B Testing Sandbox', path: ROUTES.TEST_MONITOR_SANDBOX },
+  { name: 'AI Prompting', path: ROUTES.TEST_MONITOR_AI_PROMPTING },
+  { name: 'API Testing', path: ROUTES.TEST_MONITOR_API_TESTING },
   { name: 'Advanced', path: ROUTES.TEST_MONITOR_AB_TESTING },
 ];
 
@@ -73,3 +75,5 @@ export { GoalTestsDashboard } from './GoalTestsDashboard';
 export { CreateGoalTestPage } from './CreateGoalTestPage';
 export { ABTestingDashboard } from './ABTestingDashboard';
 export { ABTestingSandbox } from './ABTestingSandbox';
+export { default as AIPromptingPage } from './AIPromptingPage';
+export { APITestingPage } from './APITestingPage';

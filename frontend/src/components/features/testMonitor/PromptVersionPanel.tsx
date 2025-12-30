@@ -130,6 +130,7 @@ export function PromptVersionPanel({
 }: PromptVersionPanelProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copyErrorId, setCopyErrorId] = useState<string | null>(null);
   const [copying, setCopying] = useState(false);
   const [viewModal, setViewModal] = useState<ViewModalState>({
     isOpen: false,
@@ -161,16 +162,26 @@ export function PromptVersionPanel({
   const handleCopy = async (fileKey: string, version?: number) => {
     if (!onCopyContent || copying) return;
 
+    const copyId = version ? `${fileKey}-v${version}` : fileKey;
     setCopying(true);
+    setCopyErrorId(null);
+
     try {
       const content = await onCopyContent(fileKey, version);
-      if (content) {
-        await navigator.clipboard.writeText(content);
-        setCopiedId(version ? `${fileKey}-v${version}` : fileKey);
-        setTimeout(() => setCopiedId(null), 2000);
+      if (!content) {
+        console.error('No content returned for copy:', fileKey, version);
+        setCopyErrorId(copyId);
+        setTimeout(() => setCopyErrorId(null), 3000);
+        return;
       }
+
+      await navigator.clipboard.writeText(content);
+      setCopiedId(copyId);
+      setTimeout(() => setCopiedId(null), 2000);
     } catch (err) {
       console.error('Failed to copy:', err);
+      setCopyErrorId(copyId);
+      setTimeout(() => setCopyErrorId(null), 3000);
     } finally {
       setCopying(false);
     }
@@ -448,6 +459,7 @@ export function PromptVersionPanel({
       {promptFiles.map(file => {
         const isExpanded = expanded[file.fileKey];
         const isCopied = copiedId === file.fileKey;
+        const hasCopyError = copyErrorId === file.fileKey;
         const fileHistory = promptHistory.filter(h => h.fileKey === file.fileKey);
 
         return (
@@ -505,12 +517,18 @@ export function PromptVersionPanel({
                     'p-1.5 rounded transition-colors',
                     isCopied
                       ? 'text-green-500'
+                      : hasCopyError
+                      ? 'text-red-500'
                       : 'text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700'
                   )}
                 >
                   {isCopied ? (
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : hasCopyError ? (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   ) : (
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -539,6 +557,7 @@ export function PromptVersionPanel({
                   <div className="divide-y divide-gray-200 dark:divide-gray-700">
                     {fileHistory.map(version => {
                       const isVersionCopied = copiedId === `${file.fileKey}-v${version.version}`;
+                      const hasVersionCopyError = copyErrorId === `${file.fileKey}-v${version.version}`;
                       return (
                         <div
                           key={version.id}
@@ -582,10 +601,12 @@ export function PromptVersionPanel({
                                 'px-2 py-0.5 text-xs font-medium rounded transition-colors',
                                 isVersionCopied
                                   ? 'bg-green-500 text-white'
+                                  : hasVersionCopyError
+                                  ? 'bg-red-500 text-white'
                                   : 'bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-300'
                               )}
                             >
-                              {isVersionCopied ? '✓' : 'Copy'}
+                              {isVersionCopied ? '✓' : hasVersionCopyError ? '✗' : 'Copy'}
                             </button>
                           </div>
                         </div>
@@ -629,18 +650,26 @@ export function PromptVersionPanel({
             </pre>
             <button
               onClick={async () => {
-                await navigator.clipboard.writeText(viewModal.content);
-                setCopiedId('modal-content');
-                setTimeout(() => setCopiedId(null), 2000);
+                try {
+                  await navigator.clipboard.writeText(viewModal.content);
+                  setCopiedId('modal-content');
+                  setTimeout(() => setCopiedId(null), 2000);
+                } catch (err) {
+                  console.error('Failed to copy modal content:', err);
+                  setCopyErrorId('modal-content');
+                  setTimeout(() => setCopyErrorId(null), 3000);
+                }
               }}
               className={cn(
                 'absolute top-2 right-2 px-3 py-1.5 text-xs font-medium rounded transition-colors',
                 copiedId === 'modal-content'
                   ? 'bg-green-500 text-white'
+                  : copyErrorId === 'modal-content'
+                  ? 'bg-red-500 text-white'
                   : 'bg-gray-700 hover:bg-gray-600 text-gray-200'
               )}
             >
-              {copiedId === 'modal-content' ? '✓ Copied!' : '📋 Copy'}
+              {copiedId === 'modal-content' ? '✓ Copied!' : copyErrorId === 'modal-content' ? '✗ Failed' : '📋 Copy'}
             </button>
           </div>
         )}

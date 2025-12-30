@@ -357,6 +357,7 @@ interface FixDetailModalProps {
 
 function FixDetailModal({ fix, onClose, conflicts, fixIndex }: FixDetailModalProps) {
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   const conflictGroup = getConflictWarning(fix.fixId, conflicts);
 
   const handleCopy = async () => {
@@ -366,6 +367,8 @@ function FixDetailModal({ fix, onClose, conflicts, fixIndex }: FixDetailModalPro
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error('Failed to copy:', err);
+      setCopyError(true);
+      setTimeout(() => setCopyError(false), 3000);
     }
   };
 
@@ -675,7 +678,12 @@ function FixDetailModal({ fix, onClose, conflicts, fixIndex }: FixDetailModalPro
               <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Suggested Code</h4>
               <button
                 onClick={handleCopy}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors",
+                  copyError
+                    ? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+                    : "bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600"
+                )}
               >
                 {copied ? (
                   <>
@@ -683,6 +691,13 @@ function FixDetailModal({ fix, onClose, conflicts, fixIndex }: FixDetailModalPro
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
                     Copied!
+                  </>
+                ) : copyError ? (
+                  <>
+                    <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    Failed!
                   </>
                 ) : (
                   <>
@@ -741,7 +756,9 @@ export function FixesPanel({
 }: FixesPanelProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copyErrorId, setCopyErrorId] = useState<string | null>(null);
   const [copiedFullPromptId, setCopiedFullPromptId] = useState<string | null>(null);
+  const [copyFullPromptErrorId, setCopyFullPromptErrorId] = useState<string | null>(null);
   const [dropdownOpen, setDropdownOpen] = useState<string | null>(null);
   const [applyModalOpen, setApplyModalOpen] = useState<string | null>(null);
   const [selectedFileKey, setSelectedFileKey] = useState<string>('');
@@ -879,21 +896,31 @@ export function FixesPanel({
       setTimeout(() => setCopiedId(null), 2000);
     } catch (err) {
       console.error('Failed to copy:', err);
+      setCopyErrorId(fixId);
+      setTimeout(() => setCopyErrorId(null), 3000);
     }
   };
 
   const handleCopyFullPrompt = async (fixId: string, fileKey: string) => {
     if (!onCopyFullPrompt) return;
 
+    const copyKey = `${fixId}-${fileKey}`;
     try {
       const content = await onCopyFullPrompt(fileKey);
-      if (content) {
-        await navigator.clipboard.writeText(content);
-        setCopiedFullPromptId(`${fixId}-${fileKey}`);
-        setTimeout(() => setCopiedFullPromptId(null), 2000);
+      if (!content) {
+        console.error('No content returned for copy full prompt:', fileKey);
+        setCopyFullPromptErrorId(copyKey);
+        setTimeout(() => setCopyFullPromptErrorId(null), 3000);
+        return;
       }
+
+      await navigator.clipboard.writeText(content);
+      setCopiedFullPromptId(copyKey);
+      setTimeout(() => setCopiedFullPromptId(null), 2000);
     } catch (err) {
       console.error('Failed to copy full prompt:', err);
+      setCopyFullPromptErrorId(copyKey);
+      setTimeout(() => setCopyFullPromptErrorId(null), 3000);
     }
     setDropdownOpen(null);
   };

@@ -84,6 +84,8 @@ export function SyncStatusIndicator({
   appliedBotFixesCount = 0,
 }: SyncStatusIndicatorProps) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [copyingKey, setCopyingKey] = useState<string | null>(null);
+  const [copyErrorKey, setCopyErrorKey] = useState<string | null>(null);
   const [markingKey, setMarkingKey] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
 
@@ -116,19 +118,31 @@ export function SyncStatusIndicator({
 
   // Handle copy prompt
   const handleCopy = useCallback(async (fileKey: string) => {
-    if (!onCopyPrompt) return;
+    if (!onCopyPrompt || copyingKey) return;
+
+    setCopyingKey(fileKey);
+    setCopyErrorKey(null);
 
     try {
       const content = await onCopyPrompt(fileKey);
-      if (content) {
-        await navigator.clipboard.writeText(content);
-        setCopiedKey(fileKey);
-        setTimeout(() => setCopiedKey(null), 2000);
+      if (!content) {
+        console.error('No content returned for prompt:', fileKey);
+        setCopyErrorKey(fileKey);
+        setTimeout(() => setCopyErrorKey(null), 3000);
+        return;
       }
+
+      await navigator.clipboard.writeText(content);
+      setCopiedKey(fileKey);
+      setTimeout(() => setCopiedKey(null), 2000);
     } catch (err) {
       console.error('Failed to copy prompt:', err);
+      setCopyErrorKey(fileKey);
+      setTimeout(() => setCopyErrorKey(null), 3000);
+    } finally {
+      setCopyingKey(null);
     }
-  }, [onCopyPrompt]);
+  }, [onCopyPrompt, copyingKey]);
 
   // Handle mark deployed
   const handleMarkDeployed = useCallback(async (fileKey: string, version: number) => {
@@ -231,6 +245,8 @@ export function SyncStatusIndicator({
             {syncStatuses.map((status) => {
               const style = statusStyles[status.syncStatus];
               const isCopied = copiedKey === status.fileKey;
+              const isCopying = copyingKey === status.fileKey;
+              const hasCopyError = copyErrorKey === status.fileKey;
               const isMarking = markingKey === status.fileKey;
 
               return (
@@ -269,15 +285,29 @@ export function SyncStatusIndicator({
                     {onCopyPrompt && (
                       <button
                         onClick={() => handleCopy(status.fileKey)}
-                        disabled={loading}
+                        disabled={loading || isCopying}
                         className={cn(
                           'px-3 py-1.5 text-xs font-medium rounded transition-colors',
                           isCopied
                             ? 'bg-green-500 text-white'
-                            : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300'
+                            : hasCopyError
+                            ? 'bg-red-500 text-white'
+                            : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300',
+                          (loading || isCopying) && 'opacity-50 cursor-not-allowed'
                         )}
                       >
-                        {isCopied ? '✓ Copied!' : 'Copy for Flowise'}
+                        {isCopying ? (
+                          <span className="flex items-center gap-1">
+                            <Spinner size="sm" />
+                            Copying...
+                          </span>
+                        ) : isCopied ? (
+                          '✓ Copied!'
+                        ) : hasCopyError ? (
+                          '✗ Failed'
+                        ) : (
+                          'Copy for Flowise'
+                        )}
                       </button>
                     )}
 

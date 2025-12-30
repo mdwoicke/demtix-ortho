@@ -685,12 +685,19 @@ export function TranscriptViewer({
   const [expandedApiCalls, setExpandedApiCalls] = useState<Record<number, boolean>>({});
   // Track if IDs are copied
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [copyErrorField, setCopyErrorField] = useState<string | null>(null);
 
   // Copy to clipboard helper
-  const copyToClipboard = useCallback((text: string, field: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedField(field);
-    setTimeout(() => setCopiedField(null), 2000);
+  const copyToClipboard = useCallback(async (text: string, field: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy to clipboard:', err);
+      setCopyErrorField(field);
+      setTimeout(() => setCopyErrorField(null), 3000);
+    }
   }, []);
 
   // Toggle API call expansion
@@ -760,6 +767,7 @@ export function TranscriptViewer({
               <span className="text-gray-400">id:</span>
               <span>{dbId}</span>
               {copiedField === 'dbId' && <span className="text-green-500 ml-1">✓</span>}
+              {copyErrorField === 'dbId' && <span className="text-red-500 ml-1">✗</span>}
             </button>
           )}
           {runId && (
@@ -771,6 +779,7 @@ export function TranscriptViewer({
               <span className="text-gray-400">run:</span>
               <span className="truncate">{runId.substring(0, 8)}...</span>
               {copiedField === 'runId' && <span className="text-green-500 ml-1">✓</span>}
+              {copyErrorField === 'runId' && <span className="text-red-500 ml-1">✗</span>}
             </button>
           )}
           {testId && (
@@ -782,6 +791,7 @@ export function TranscriptViewer({
               <span className="text-gray-400">test:</span>
               <span>{testId}</span>
               {copiedField === 'testId' && <span className="text-green-500 ml-1">✓</span>}
+              {copyErrorField === 'testId' && <span className="text-red-500 ml-1">✗</span>}
             </button>
           )}
         </div>
