@@ -8,6 +8,20 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5174,
     strictPort: true,
+    proxy: {
+      // Proxy Node Red API calls to the test server
+      '/FabricWorkflow': {
+        target: 'http://localhost:3333',
+        changeOrigin: true,
+      },
+      // Proxy Cloud9 API calls (sandbox) to bypass CORS
+      '/cloud9-api': {
+        target: 'https://us-ea1-partnertest.cloud9ortho.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/cloud9-api/, ''),
+        secure: true,
+      },
+    },
   },
   optimizeDeps: {
     include: [
