@@ -187,9 +187,23 @@ class GoalEvaluator {
         return violations;
     }
     /**
+     * Convert backend turn number to transcript-based turn number.
+     *
+     * Backend turnNumber counts conversation exchanges (user-assistant pairs).
+     * Frontend expects turns as individual messages (1-indexed).
+     *
+     * Formula: transcriptTurn = 2 * backendTurn
+     * This points to the assistant message at that conversation turn.
+     */
+    toTranscriptTurn(backendTurn) {
+        return 2 * backendTurn;
+    }
+    /**
      * Check a single constraint
      */
     checkConstraint(constraint, context, progress, durationMs) {
+        // Convert backend turn to transcript-based turn for frontend display
+        const transcriptTurn = this.toTranscriptTurn(progress.turnNumber);
         switch (constraint.type) {
             case 'must_happen':
                 if (constraint.condition && !constraint.condition(context)) {
@@ -204,7 +218,7 @@ class GoalEvaluator {
                     return {
                         constraint,
                         message: `Forbidden condition occurred: ${constraint.description}`,
-                        turnNumber: progress.turnNumber,
+                        turnNumber: transcriptTurn,
                     };
                 }
                 return null;
@@ -213,7 +227,7 @@ class GoalEvaluator {
                     return {
                         constraint,
                         message: `Exceeded max turns: ${progress.turnNumber} > ${constraint.maxTurns}`,
-                        turnNumber: progress.turnNumber,
+                        turnNumber: transcriptTurn,
                     };
                 }
                 return null;

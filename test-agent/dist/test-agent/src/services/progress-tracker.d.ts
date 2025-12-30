@@ -45,6 +45,20 @@ export declare class ProgressTracker {
      */
     private updateFlowState;
     /**
+     * Convert backend turn number to transcript message index
+     *
+     * Backend turnNumber counts conversation exchanges (user-assistant pairs):
+     * - turnNumber=1 means the first exchange (initial user msg + assistant response)
+     * - turnNumber=N corresponds to assistant message at transcript index 2*N - 1
+     *
+     * Frontend displays turns as individual messages (1-indexed):
+     * - Turn 1 = transcript[0], Turn 2 = transcript[1], etc.
+     *
+     * This function returns the frontend turn number (1-indexed message position)
+     * for the assistant message at the given backend turn.
+     */
+    private turnToTranscriptIndex;
+    /**
      * Detect conversation issues
      */
     private detectIssues;
@@ -78,6 +92,11 @@ export declare class ProgressTracker {
      * Evaluate conversation ended goal
      */
     private evaluateEndedGoal;
+    /**
+     * Evaluate custom goals by checking if related states or conditions are met.
+     * This handles goals like 'recognize-existing' that depend on conversation flow.
+     */
+    private evaluateCustomGoalByState;
     /**
      * Build goal context for custom evaluations
      */

@@ -43,17 +43,32 @@ const path = __importStar(require("path"));
 const config_1 = require("../config/config");
 const llm_provider_1 = require("../../../shared/services/llm-provider");
 const llm_config_1 = require("../../../shared/config/llm-config");
+const ab_testing_1 = require("./ab-testing");
 // ============================================================================
 // LLM Analysis Service
 // ============================================================================
 class LLMAnalysisService {
-    constructor() {
+    constructor(database) {
         this.systemPromptContent = '';
         this.schedulingToolContent = '';
         this.patientToolContent = '';
+        this.triggerService = null;
+        this.database = null;
         this.llmProvider = (0, llm_provider_1.getLLMProvider)();
         this.loadSourceFiles();
         this.logInitialization();
+        // Initialize TriggerService if database is provided
+        if (database) {
+            this.database = database;
+            this.triggerService = new ab_testing_1.TriggerService(database);
+        }
+    }
+    /**
+     * Set the database and initialize A/B testing capabilities
+     */
+    setDatabase(database) {
+        this.database = database;
+        this.triggerService = new ab_testing_1.TriggerService(database);
     }
     async logInitialization() {
         const mode = (0, llm_config_1.isClaudeCliEnabled)() ? 'CLI' : 'API';
@@ -161,6 +176,119 @@ class LLMAnalysisService {
         const deduplicatedFixes = this.deduplicateFixes(allFixes);
         return { analyses, deduplicatedFixes };
     }
+    /**
+     * Analyze a test failure and generate fix recommendations with A/B testing suggestions
+     * This method extends analyzeFailure to include A/B testing recommendations
+     * for high-impact fixes.
+     */
+    async analyzeFailureWithABRecommendation(context) {
+        // First, get the standard analysis
+        const result = await this.analyzeFailure(context);
+        // If no trigger service, return without A/B recommendations
+        if (!this.triggerService || !this.database) {
+            return {
+                ...result,
+                abRecommendations: [],
+                testableFixIds: [],
+            };
+        }
+        // Convert fixes to GeneratedFix format for A/B assessment
+        const generatedFixes = this.convertToGeneratedFixes(result.fixes, context, result.rootCause);
+        // Save generated fixes to database
+        for (const fix of generatedFixes) {
+            this.database.saveGeneratedFix(fix);
+        }
+        // Generate A/B recommendations using TriggerService
+        const abRecommendations = this.triggerService.generateABRecommendations(generatedFixes);
+        const testableFixIds = abRecommendations.map(r => r.fix.fixId);
+        // Log A/B recommendations if any
+        if (abRecommendations.length > 0) {
+            console.log(`[LLMAnalysisService] Found ${abRecommendations.length} fixes warranting A/B testing:`);
+            for (const rec of abRecommendations) {
+                console.log(`  - [${rec.impactLevel.toUpperCase()}] ${rec.fix.changeDescription.substring(0, 50)}`);
+            }
+        }
+        return {
+            ...result,
+            abRecommendations,
+            testableFixIds,
+        };
+    }
+    /**
+     * Analyze multiple failures with A/B recommendations
+     */
+    async analyzeMultipleFailuresWithABRecommendations(contexts) {
+        const analyses = new Map();
+        const allFixes = [];
+        const allABRecommendations = [];
+        for (const context of contexts) {
+            try {
+                const result = await this.analyzeFailureWithABRecommendation(context);
+                analyses.set(context.testId, result);
+                allFixes.push(...result.fixes);
+                allABRecommendations.push(...result.abRecommendations);
+            }
+            catch (error) {
+                console.error(`Failed to analyze ${context.testId}:`, error);
+            }
+        }
+        // Deduplicate fixes
+        const deduplicatedFixes = this.deduplicateFixes(allFixes);
+        // Deduplicate A/B recommendations by fix ID
+        const seenFixIds = new Set();
+        const uniqueABRecommendations = allABRecommendations.filter(rec => {
+            if (seenFixIds.has(rec.fix.fixId)) {
+                return false;
+            }
+            seenFixIds.add(rec.fix.fixId);
+            return true;
+        });
+        return {
+            analyses,
+            deduplicatedFixes,
+            abRecommendations: uniqueABRecommendations,
+        };
+    }
+    /**
+     * Convert PromptFix/ToolFix to GeneratedFix format for A/B testing
+     */
+    convertToGeneratedFixes(fixes, context, rootCause) {
+        const generatedFixes = [];
+        const now = new Date().toISOString();
+        for (let i = 0; i < fixes.length; i++) {
+            const fix = fixes[i];
+            const fixId = `FIX-${Date.now().toString(36)}-${i}`;
+            const generatedFix = {
+                fixId,
+                runId: '', // Will be set by caller if needed
+                affectedTests: [context.testId],
+                type: fix.type,
+                targetFile: fix.targetFile,
+                location: fix.type === 'prompt'
+                    ? {
+                        section: fix.location.section,
+                        afterLine: fix.location.afterLine,
+                    }
+                    : {
+                        function: fix.location.function,
+                        lineNumber: fix.location.lineNumber,
+                        afterLine: fix.location.afterLine,
+                    },
+                changeDescription: fix.changeDescription,
+                changeCode: fix.changeCode,
+                rootCause: {
+                    type: rootCause.type,
+                    evidence: rootCause.evidence,
+                },
+                priority: fix.priority,
+                confidence: fix.confidence,
+                status: 'pending',
+                createdAt: now,
+            };
+            generatedFixes.push(generatedFix);
+        }
+        return generatedFixes;
+    }
     buildAnalysisPrompt(context) {
         const transcriptSummary = context.transcript
             .slice(-10) // Last 10 turns
@@ -251,6 +379,18 @@ Categorize as one of:
    - Complete replacement/addition code
    - Confidence score (0.0 to 1.0)
    - Priority (critical, high, medium, low)
+
+**AVAILABLE TARGET FILES:**
+- **System Prompt**: \`docs/Chord_Cloud9_SystemPrompt.md\` - Bot behavior instructions
+- **Scheduling Tool (.js)**: \`docs/chord_dso_scheduling-StepwiseSearch.js\` - JavaScript logic
+- **Scheduling Tool (.json)**: \`docs/chord_dso_scheduling-StepwiseSearch.json\` - Flowise config
+- **Patient Tool (.js)**: \`docs/chord_dso_patient-FIXED.js\` - JavaScript logic
+- **Patient Tool (.json)**: \`docs/chord_dso_patient-FIXED.json\` - Flowise config
+
+**When to use each:**
+- **.js files**: For fixing tool LOGIC (defaults, parsing, validation, API calls)
+- **.json files**: For fixing Flowise CONFIGURATION (descriptions, schemas, parameters)
+- **.md files**: For fixing bot BEHAVIOR (instructions, rules, examples)
 
 ### Step 3: Respond in this exact JSON format:
 \`\`\`json
@@ -346,16 +486,65 @@ Be specific and actionable. Generate complete code that can be directly applied.
                     };
                 }
             });
+            // Derive classification from actual fix target files (overrides LLM classification)
+            const derivedClassification = this.deriveClassificationFromFixes(fixes, classification);
             return {
                 rootCause,
                 fixes,
                 summary: parsed.summary || 'Analysis complete',
-                classification,
+                classification: derivedClassification,
             };
         }
         catch (error) {
             return this.createFallbackResult(context, responseText);
         }
+    }
+    /**
+     * Derive classification from actual fix target files
+     * This ensures classification matches what the fixes actually modify
+     */
+    deriveClassificationFromFixes(fixes, llmClassification) {
+        if (fixes.length === 0) {
+            return llmClassification; // No fixes, use LLM classification if available
+        }
+        // Categorize fixes by target type
+        let hasBotFixes = false;
+        let hasTestAgentFixes = false;
+        for (const fix of fixes) {
+            const targetFile = fix.targetFile.toLowerCase();
+            if (targetFile.includes('systemprompt') ||
+                targetFile.endsWith('.md') ||
+                targetFile.includes('chord_dso') ||
+                (targetFile.includes('docs/') && (targetFile.endsWith('.js') || targetFile.endsWith('.json')))) {
+                hasBotFixes = true;
+            }
+            else if (targetFile.includes('test-agent/') || targetFile.includes('test-cases/')) {
+                hasTestAgentFixes = true;
+            }
+            else {
+                // Default unknown targets to bot fixes
+                hasBotFixes = true;
+            }
+        }
+        // Determine issue location based on actual fix targets
+        let issueLocation;
+        if (hasBotFixes && hasTestAgentFixes) {
+            issueLocation = 'both';
+        }
+        else if (hasTestAgentFixes) {
+            issueLocation = 'test-agent';
+        }
+        else {
+            issueLocation = 'bot';
+        }
+        // Return classification with derived issueLocation
+        return {
+            issueLocation,
+            confidence: llmClassification?.confidence || 0.8,
+            reasoning: llmClassification?.reasoning || `Derived from fix target files`,
+            userBehaviorRealistic: llmClassification?.userBehaviorRealistic ?? (issueLocation !== 'test-agent'),
+            botResponseAppropriate: llmClassification?.botResponseAppropriate ?? (issueLocation === 'test-agent'),
+        };
     }
     createFallbackResult(context, responseText) {
         return {

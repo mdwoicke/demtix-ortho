@@ -3,7 +3,8 @@
  * Uses Claude API or CLI to analyze test failures and generate fix recommendations
  */
 import { ConversationTurn, Finding } from '../tests/test-case';
-import { ApiCall } from '../storage/database';
+import { ApiCall, Database } from '../storage/database';
+import { type ABRecommendation } from './ab-testing';
 export interface FailureContext {
     testId: string;
     testName: string;
@@ -75,12 +76,27 @@ export interface AnalysisResult {
     /** Classification of bot vs test-agent issue */
     classification?: FixClassification;
 }
+/**
+ * Analysis result extended with A/B testing recommendations
+ */
+export interface AnalysisResultWithABRecommendations extends AnalysisResult {
+    /** A/B testing recommendations for high-impact fixes */
+    abRecommendations: ABRecommendation[];
+    /** Fixes that warrant A/B testing */
+    testableFixIds: string[];
+}
 export declare class LLMAnalysisService {
     private llmProvider;
     private systemPromptContent;
     private schedulingToolContent;
     private patientToolContent;
-    constructor();
+    private triggerService;
+    private database;
+    constructor(database?: Database);
+    /**
+     * Set the database and initialize A/B testing capabilities
+     */
+    setDatabase(database: Database): void;
     private logInitialization;
     private loadSourceFiles;
     /**
@@ -98,8 +114,31 @@ export declare class LLMAnalysisService {
         analyses: Map<string, AnalysisResult>;
         deduplicatedFixes: (PromptFix | ToolFix)[];
     }>;
+    /**
+     * Analyze a test failure and generate fix recommendations with A/B testing suggestions
+     * This method extends analyzeFailure to include A/B testing recommendations
+     * for high-impact fixes.
+     */
+    analyzeFailureWithABRecommendation(context: FailureContext): Promise<AnalysisResultWithABRecommendations>;
+    /**
+     * Analyze multiple failures with A/B recommendations
+     */
+    analyzeMultipleFailuresWithABRecommendations(contexts: FailureContext[]): Promise<{
+        analyses: Map<string, AnalysisResultWithABRecommendations>;
+        deduplicatedFixes: (PromptFix | ToolFix)[];
+        abRecommendations: ABRecommendation[];
+    }>;
+    /**
+     * Convert PromptFix/ToolFix to GeneratedFix format for A/B testing
+     */
+    private convertToGeneratedFixes;
     private buildAnalysisPrompt;
     private parseAnalysisResponse;
+    /**
+     * Derive classification from actual fix target files
+     * This ensures classification matches what the fixes actually modify
+     */
+    private deriveClassificationFromFixes;
     private createFallbackResult;
     private deduplicateFixes;
     /**

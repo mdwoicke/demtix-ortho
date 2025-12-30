@@ -844,8 +844,7 @@ export class Database {
     this.addColumnIfNotExists('ai_enhancement_history', 'context', "TEXT DEFAULT 'production'");
     this.addColumnIfNotExists('ai_enhancement_history', 'sandbox_id', 'TEXT');
 
-    // Add index for context-based queries
-    const db = this.getDb();
+    // Add index for context-based queries (db already declared at top of method)
     db.exec(`CREATE INDEX IF NOT EXISTS idx_ai_enhancement_context ON ai_enhancement_history(context, file_key)`);
 
     // Initialize built-in enhancement templates

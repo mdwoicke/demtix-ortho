@@ -4,10 +4,13 @@
  * Executes goal-oriented tests using dynamic conversation flow.
  * Instead of fixed step sequences, it adapts to what the agent asks
  * and generates appropriate responses from persona inventory.
+ *
+ * Supports A/B experiment context for variant testing.
  */
 import { FlowiseClient } from '../core/flowise-client';
 import { Database } from '../storage/database';
 import { IntentDetector } from '../services/intent-detector';
+import { ExperimentService, VariantService } from '../services/ab-testing';
 import type { GoalOrientedTestCase, GoalTestResult } from './types/goal-test';
 /**
  * Configuration for the goal test runner
@@ -25,6 +28,15 @@ export interface GoalTestRunnerConfig {
     continueOnError: boolean;
 }
 /**
+ * Options for running a test with A/B experiment context
+ */
+export interface ExperimentRunOptions {
+    /** Experiment ID to run the test under */
+    experimentId: string;
+    /** Run ID for this test execution */
+    runId: string;
+}
+/**
  * Goal-Oriented Test Runner
  *
  * Executes tests by:
@@ -34,24 +46,51 @@ export interface GoalTestRunnerConfig {
  * 4. Tracking progress toward goals (ProgressTracker)
  * 5. Continuing until goals complete or max turns reached
  * 6. Evaluating final result (GoalEvaluator)
+ *
+ * Supports A/B experiment context:
+ * - When experimentId is provided, selects a variant
+ * - Applies the variant temporarily during test execution
+ * - Records experiment run metrics
+ * - Rolls back variant after test completion
  */
 export declare class GoalTestRunner {
     private flowiseClient;
     private database;
     private intentDetector;
     private config;
+    private experimentService;
+    private variantService;
     constructor(flowiseClient: FlowiseClient, database: Database, intentDetector: IntentDetector, cfg?: Partial<GoalTestRunnerConfig>);
+    /**
+     * Set A/B testing services for experiment support
+     */
+    setABTestingServices(experimentService: ExperimentService, variantService: VariantService): void;
     /**
      * Run a goal-oriented test
      * @param testCase The test case to run
      * @param runId The run ID for this test execution
      * @param testIdOverride Optional override for testId (e.g., "GOAL-HAPPY-001#2" for second run)
+     * @param experimentOptions Optional A/B experiment context
      */
-    runTest(testCase: GoalOrientedTestCase, runId: string, testIdOverride?: string): Promise<GoalTestResult>;
+    runTest(testCase: GoalOrientedTestCase, runId: string, testIdOverride?: string, experimentOptions?: ExperimentRunOptions): Promise<GoalTestResult>;
     /**
      * Run multiple goal tests
      */
     runTests(testCases: GoalOrientedTestCase[], runId: string): Promise<Map<string, GoalTestResult>>;
+    /**
+     * Run a test with A/B experiment context
+     * This method:
+     * 1. Selects a variant from the experiment
+     * 2. Applies the variant temporarily
+     * 3. Runs the test
+     * 4. Records experiment run metrics
+     * 5. Rolls back the variant
+     */
+    private runTestWithExperiment;
+    /**
+     * Run multiple tests as part of an A/B experiment
+     */
+    runTestsWithExperiment(testCases: GoalOrientedTestCase[], runId: string, experimentId: string): Promise<Map<string, GoalTestResult>>;
     /**
      * Send a message to the agent and record transcript
      */

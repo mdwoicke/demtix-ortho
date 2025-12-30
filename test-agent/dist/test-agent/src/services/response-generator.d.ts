@@ -37,6 +37,11 @@ export declare class ResponseGenerator {
      */
     generateResponse(intent: IntentDetectionResult, conversationHistory: ConversationTurn[]): Promise<string>;
     /**
+     * Check if the agent is asking about a different child and advance the index
+     * This handles multi-child scenarios where the bot asks for "next child", "second child", etc.
+     */
+    private checkAndAdvanceChildIndex;
+    /**
      * Determine if we should use LLM instead of template
      */
     private shouldUseLlm;

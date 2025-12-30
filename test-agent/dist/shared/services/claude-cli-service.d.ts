@@ -1,6 +1,7 @@
 /**
  * Claude CLI Service
  * Wraps the Claude CLI as a subprocess for LLM operations
+ * Uses async spawn to avoid blocking the Node.js event loop
  */
 export interface ClaudeCliRequest {
     prompt: string;
@@ -55,7 +56,7 @@ export declare class ClaudeCliService {
     private mapModelName;
     /**
      * Run a CLI command and return the result
-     * Uses execSync which works reliably on Windows (spawn with pipes hangs)
+     * Uses async spawn to avoid blocking the Node.js event loop
      */
     private runCommand;
 }

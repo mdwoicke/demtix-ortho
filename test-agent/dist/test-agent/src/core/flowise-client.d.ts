@@ -24,7 +24,25 @@ export interface FlowiseError {
 export declare class FlowiseClient {
     private client;
     private sessionId;
-    constructor(sessionId?: string);
+    private endpoint;
+    /**
+     * Create a new FlowiseClient
+     * @param sessionId - Optional session ID (generates UUID if not provided)
+     * @param endpoint - Optional endpoint URL override (uses config default if not provided)
+     */
+    constructor(sessionId?: string, endpoint?: string);
+    /**
+     * Get the current endpoint URL
+     */
+    getEndpoint(): string;
+    /**
+     * Create a FlowiseClient for a specific sandbox endpoint
+     */
+    static forSandbox(endpoint: string, sessionId?: string): FlowiseClient;
+    /**
+     * Create a FlowiseClient using the default production endpoint
+     */
+    static forProduction(sessionId?: string): FlowiseClient;
     /**
      * Send a message to the Flowise API
      */

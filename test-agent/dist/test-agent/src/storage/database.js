@@ -533,6 +533,32 @@ class Database {
 
       CREATE INDEX IF NOT EXISTS idx_ai_templates_category ON ai_enhancement_templates(category);
       CREATE INDEX IF NOT EXISTS idx_ai_templates_built_in ON ai_enhancement_templates(is_built_in);
+
+      -- ========================================================================
+      -- REFERENCE DOCUMENTS TABLE
+      -- ========================================================================
+
+      -- Reference Documents: Store supporting documents for AI enhancement context
+      CREATE TABLE IF NOT EXISTS reference_documents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id TEXT UNIQUE NOT NULL,
+        file_key TEXT NOT NULL,
+        label TEXT NOT NULL,
+        original_filename TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        file_size INTEGER NOT NULL,
+        extracted_text TEXT,
+        extraction_status TEXT CHECK(extraction_status IN ('pending', 'success', 'failed')) DEFAULT 'pending',
+        extraction_error TEXT,
+        display_order INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (file_key) REFERENCES prompt_working_copies(file_key)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ref_docs_file_key ON reference_documents(file_key);
+      CREATE INDEX IF NOT EXISTS idx_ref_docs_active ON reference_documents(is_active);
     `);
         // Migration: Add agent_question column if it doesn't exist
         this.addColumnIfNotExists('findings', 'agent_question', 'TEXT');
@@ -559,6 +585,13 @@ class Database {
         this.addColumnIfNotExists('ai_enhancement_history', 'applied_content', 'TEXT');
         // Migration: Update CHECK constraint to include 'applied' and 'promoted' statuses
         this.migrateEnhancementHistoryCheckConstraint();
+        // Migration: Add is_enabled field to reference_documents (for selective inclusion in enhancements)
+        this.addColumnIfNotExists('reference_documents', 'is_enabled', 'INTEGER DEFAULT 1');
+        // Migration: Add context columns to ai_enhancement_history for sandbox support
+        this.addColumnIfNotExists('ai_enhancement_history', 'context', "TEXT DEFAULT 'production'");
+        this.addColumnIfNotExists('ai_enhancement_history', 'sandbox_id', 'TEXT');
+        // Add index for context-based queries (db already declared at top of method)
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_ai_enhancement_context ON ai_enhancement_history(context, file_key)`);
         // Initialize built-in enhancement templates
         this.initializeBuiltInTemplates();
     }
@@ -2559,9 +2592,9 @@ class Database {
         const enhancementId = `enh-${new Date().toISOString().slice(0, 10)}-${(0, uuid_1.v4)().slice(0, 8)}`;
         db.prepare(`
       INSERT INTO ai_enhancement_history
-      (enhancement_id, file_key, source_version, command, command_template, web_search_used, status, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(enhancementId, enhancement.fileKey, enhancement.sourceVersion, enhancement.command, enhancement.commandTemplate || null, enhancement.webSearchUsed ? 1 : 0, enhancement.status, enhancement.createdBy);
+      (enhancement_id, file_key, source_version, command, command_template, web_search_used, status, created_by, context, sandbox_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(enhancementId, enhancement.fileKey, enhancement.sourceVersion, enhancement.command, enhancement.commandTemplate || null, enhancement.webSearchUsed ? 1 : 0, enhancement.status, enhancement.createdBy, enhancement.context || 'production', enhancement.sandboxId || null);
         return enhancementId;
     }
     /**
@@ -2652,14 +2685,14 @@ class Database {
     /**
      * Get enhancement history for a file
      */
-    getEnhancementHistory(fileKey, limit = 20) {
+    getEnhancementHistory(fileKey, limit = 20, context = 'production') {
         const db = this.getDb();
         const rows = db.prepare(`
       SELECT * FROM ai_enhancement_history
-      WHERE file_key = ?
+      WHERE file_key = ? AND (context = ? OR context IS NULL)
       ORDER BY created_at DESC
       LIMIT ?
-    `).all(fileKey, limit);
+    `).all(fileKey, context, limit);
         return rows.map(row => this.mapEnhancementRow(row));
     }
     /**
@@ -2762,7 +2795,30 @@ class Database {
             appliedAt: row.applied_at,
             promotedAt: row.promoted_at,
             appliedContent: row.applied_content,
+            // Context fields
+            context: row.context || 'production',
+            sandboxId: row.sandbox_id,
         };
+    }
+    // ============================================================================
+    // REFERENCE DOCUMENT METHODS
+    // ============================================================================
+    /**
+     * Get reference documents with extracted text for a file key
+     * Used by AI enhancement service to include reference context in prompts
+     */
+    getReferenceDocumentsForEnhancement(fileKey) {
+        const db = this.getDb();
+        const documents = db.prepare(`
+      SELECT
+        document_id as documentId,
+        label,
+        extracted_text as extractedText
+      FROM reference_documents
+      WHERE file_key = ? AND is_active = 1 AND is_enabled = 1 AND extraction_status = 'success'
+      ORDER BY display_order ASC
+    `).all(fileKey);
+        return documents;
     }
     /**
      * Close database connection

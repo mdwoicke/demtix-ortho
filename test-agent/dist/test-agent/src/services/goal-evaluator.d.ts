@@ -49,6 +49,16 @@ export declare class GoalEvaluator {
      */
     private checkAllConstraints;
     /**
+     * Convert backend turn number to transcript-based turn number.
+     *
+     * Backend turnNumber counts conversation exchanges (user-assistant pairs).
+     * Frontend expects turns as individual messages (1-indexed).
+     *
+     * Formula: transcriptTurn = 2 * backendTurn
+     * This points to the assistant message at that conversation turn.
+     */
+    private toTranscriptTurn;
+    /**
      * Check a single constraint
      */
     private checkConstraint;

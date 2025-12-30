@@ -89,6 +89,7 @@ export interface PromptVersion {
     testPassRate?: number;
     capturedAt: string;
 }
+export type PromptContext = 'production' | 'sandbox_a' | 'sandbox_b';
 export interface AIEnhancementHistory {
     id?: number;
     enhancementId: string;
@@ -113,6 +114,8 @@ export interface AIEnhancementHistory {
     appliedAt?: string;
     promotedAt?: string;
     appliedContent?: string;
+    context?: PromptContext;
+    sandboxId?: string;
 }
 export interface AIEnhancementTemplate {
     id?: number;
@@ -147,6 +150,23 @@ export interface WebSearchResult {
     excerpt: string;
     relevanceScore: number;
     keyTakeaways: string[];
+}
+export interface ReferenceDocument {
+    id?: number;
+    documentId: string;
+    fileKey: string;
+    label: string;
+    originalFilename: string;
+    mimeType: string;
+    fileSize: number;
+    extractedText?: string;
+    extractionStatus: 'pending' | 'success' | 'failed';
+    extractionError?: string;
+    displayOrder: number;
+    isActive: boolean;
+    isEnabled: boolean;
+    createdAt: string;
+    updatedAt: string;
 }
 export interface GoalTestResultRecord {
     id?: number;
@@ -659,7 +679,7 @@ export declare class Database {
     /**
      * Get enhancement history for a file
      */
-    getEnhancementHistory(fileKey: string, limit?: number): AIEnhancementHistory[];
+    getEnhancementHistory(fileKey: string, limit?: number, context?: PromptContext): AIEnhancementHistory[];
     /**
      * Get all enhancement templates
      */
@@ -680,6 +700,15 @@ export declare class Database {
      * Helper to map enhancement row to interface
      */
     private mapEnhancementRow;
+    /**
+     * Get reference documents with extracted text for a file key
+     * Used by AI enhancement service to include reference context in prompts
+     */
+    getReferenceDocumentsForEnhancement(fileKey: string): Array<{
+        documentId: string;
+        label: string;
+        extractedText: string;
+    }>;
     /**
      * Close database connection
      */

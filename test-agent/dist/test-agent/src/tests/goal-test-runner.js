@@ -5,6 +5,8 @@
  * Executes goal-oriented tests using dynamic conversation flow.
  * Instead of fixed step sequences, it adapts to what the agent asks
  * and generates appropriate responses from persona inventory.
+ *
+ * Supports A/B experiment context for variant testing.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.GoalTestRunner = void 0;
@@ -31,21 +33,41 @@ const DEFAULT_CONFIG = {
  * 4. Tracking progress toward goals (ProgressTracker)
  * 5. Continuing until goals complete or max turns reached
  * 6. Evaluating final result (GoalEvaluator)
+ *
+ * Supports A/B experiment context:
+ * - When experimentId is provided, selects a variant
+ * - Applies the variant temporarily during test execution
+ * - Records experiment run metrics
+ * - Rolls back variant after test completion
  */
 class GoalTestRunner {
     constructor(flowiseClient, database, intentDetector, cfg) {
+        this.experimentService = null;
+        this.variantService = null;
         this.flowiseClient = flowiseClient;
         this.database = database;
         this.intentDetector = intentDetector;
         this.config = { ...DEFAULT_CONFIG, ...cfg };
     }
     /**
+     * Set A/B testing services for experiment support
+     */
+    setABTestingServices(experimentService, variantService) {
+        this.experimentService = experimentService;
+        this.variantService = variantService;
+    }
+    /**
      * Run a goal-oriented test
      * @param testCase The test case to run
      * @param runId The run ID for this test execution
      * @param testIdOverride Optional override for testId (e.g., "GOAL-HAPPY-001#2" for second run)
+     * @param experimentOptions Optional A/B experiment context
      */
-    async runTest(testCase, runId, testIdOverride) {
+    async runTest(testCase, runId, testIdOverride, experimentOptions) {
+        // If experiment context provided, delegate to experiment-aware execution
+        if (experimentOptions && this.experimentService && this.variantService) {
+            return this.runTestWithExperiment(testCase, runId, testIdOverride, experimentOptions);
+        }
         // Use testIdOverride for storage if provided (supports multiple runs of same test)
         const effectiveTestId = testIdOverride || testCase.id;
         const startTime = Date.now();
@@ -144,6 +166,148 @@ class GoalTestRunner {
         for (const testCase of testCases) {
             console.log(`\n[GoalTestRunner] Running: ${testCase.id} - ${testCase.name}`);
             const result = await this.runTest(testCase, runId);
+            results.set(testCase.id, result);
+            console.log(`[GoalTestRunner] ${testCase.id}: ${result.passed ? 'PASSED' : 'FAILED'}`);
+            console.log(`  Summary: ${result.summary}`);
+        }
+        return results;
+    }
+    /**
+     * Run a test with A/B experiment context
+     * This method:
+     * 1. Selects a variant from the experiment
+     * 2. Applies the variant temporarily
+     * 3. Runs the test
+     * 4. Records experiment run metrics
+     * 5. Rolls back the variant
+     */
+    async runTestWithExperiment(testCase, runId, testIdOverride, experimentOptions) {
+        const { experimentId } = experimentOptions;
+        const effectiveTestId = testIdOverride || testCase.id;
+        // These are guaranteed to be set by the caller
+        const experimentService = this.experimentService;
+        const variantService = this.variantService;
+        // Select variant for this test run
+        let variantSelection;
+        try {
+            variantSelection = experimentService.selectVariant(experimentId, effectiveTestId);
+            console.log(`[GoalTestRunner] Selected variant: ${variantSelection.variantId} (${variantSelection.role})`);
+        }
+        catch (error) {
+            console.error(`[GoalTestRunner] Failed to select variant: ${error.message}`);
+            throw error;
+        }
+        // Apply the variant temporarily
+        try {
+            await variantService.applyVariant(variantSelection.variantId);
+            console.log(`[GoalTestRunner] Applied variant to ${variantSelection.targetFile}`);
+        }
+        catch (error) {
+            console.error(`[GoalTestRunner] Failed to apply variant: ${error.message}`);
+            throw error;
+        }
+        const startTime = Date.now();
+        let result;
+        let constraintViolationCount = 0;
+        let errorOccurred = false;
+        try {
+            // Run the test normally (without experiment options to avoid recursion)
+            result = await this.runTest(testCase, runId, testIdOverride);
+            // Count constraint violations
+            constraintViolationCount = result.constraintViolations.length;
+        }
+        catch (error) {
+            // Test execution failed
+            errorOccurred = true;
+            console.error(`[GoalTestRunner] Test execution failed: ${error.message}`);
+            // Create a failed result with minimal progress state
+            const now = new Date();
+            result = {
+                passed: false,
+                turnCount: 0,
+                durationMs: Date.now() - startTime,
+                goalResults: testCase.goals.map(g => ({
+                    goalId: g.id,
+                    description: g.description,
+                    passed: false,
+                    message: `Test execution error: ${error.message}`,
+                })),
+                constraintViolations: [],
+                issues: [{
+                        type: 'error',
+                        severity: 'critical',
+                        description: `Test execution error: ${error.message}`,
+                        turnNumber: 0,
+                    }],
+                summary: `Test failed due to error: ${error.message}`,
+                progress: {
+                    collectedFields: new Map(),
+                    pendingFields: [],
+                    completedGoals: [],
+                    activeGoals: [],
+                    failedGoals: testCase.goals.map(g => g.id),
+                    currentFlowState: 'error',
+                    turnNumber: 0,
+                    lastAgentIntent: 'unknown',
+                    intentHistory: [],
+                    bookingConfirmed: false,
+                    transferInitiated: false,
+                    startedAt: now,
+                    lastActivityAt: now,
+                    issues: [{
+                            type: 'error',
+                            severity: 'critical',
+                            description: `Test execution error: ${error.message}`,
+                            turnNumber: 0,
+                        }],
+                },
+                transcript: [],
+            };
+        }
+        finally {
+            // Always rollback the variant
+            try {
+                await variantService.rollback(variantSelection.targetFile);
+                console.log(`[GoalTestRunner] Rolled back variant from ${variantSelection.targetFile}`);
+            }
+            catch (rollbackError) {
+                console.error(`[GoalTestRunner] Failed to rollback variant: ${rollbackError.message}`);
+            }
+        }
+        // Record experiment run
+        try {
+            // Calculate goals completed
+            const goalsCompleted = result.goalResults.filter(g => g.passed).length;
+            const goalsTotal = result.goalResults.length;
+            experimentService.recordTestResult(experimentId, runId, effectiveTestId, variantSelection, {
+                passed: result.passed,
+                turnCount: result.turnCount,
+                durationMs: result.durationMs,
+                goalCompletionRate: goalsTotal > 0 ? goalsCompleted / goalsTotal : 0,
+                constraintViolations: constraintViolationCount,
+                errorOccurred,
+                goalsCompleted,
+                goalsTotal,
+                issuesDetected: result.issues.length,
+            });
+            console.log(`[GoalTestRunner] Recorded experiment run for ${experimentId}`);
+        }
+        catch (recordError) {
+            console.error(`[GoalTestRunner] Failed to record experiment run: ${recordError.message}`);
+        }
+        return result;
+    }
+    /**
+     * Run multiple tests as part of an A/B experiment
+     */
+    async runTestsWithExperiment(testCases, runId, experimentId) {
+        const results = new Map();
+        for (const testCase of testCases) {
+            console.log(`\n[GoalTestRunner] Running experiment: ${testCase.id} - ${testCase.name}`);
+            const result = await this.runTest(testCase, runId, undefined, {
+                experimentId,
+                runId,
+            });
             results.set(testCase.id, result);
             console.log(`[GoalTestRunner] ${testCase.id}: ${result.passed ? 'PASSED' : 'FAILED'}`);
             console.log(`  Summary: ${result.summary}`);

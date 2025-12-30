@@ -129,85 +129,133 @@ async function runGoalTests(scenarioIds, concurrency, db) {
     const runId = db.createTestRun();
     const startTime = Date.now();
     const results = [];
+    let runCompleted = false;
+    // Track current run for SIGINT handling
+    currentRunId = runId;
+    currentDb = db;
     // Track run counts per scenario for proper indexing when same test runs multiple times
     const runCountPerScenario = new Map();
-    // Run tests (sequential for now, can add parallel later)
-    for (const scenario of scenariosToRun) {
-        // Increment run count for this scenario
-        const currentCount = (runCountPerScenario.get(scenario.id) || 0) + 1;
-        runCountPerScenario.set(scenario.id, currentCount);
-        // Generate unique test ID with run index (e.g., GOAL-HAPPY-001#2 for second run)
-        const testIdWithRun = currentCount > 1 ? `${scenario.id}#${currentCount}` : scenario.id;
-        console.log(`[GoalTest] Starting: ${testIdWithRun} - ${scenario.name}`);
-        // Create per-test runner with fresh session
-        const flowiseClient = new flowise_client_1.FlowiseClient();
-        const intentDetector = new intent_detector_1.IntentDetector();
-        const runner = new goal_test_runner_1.GoalTestRunner(flowiseClient, db, intentDetector);
-        try {
-            // Pass testIdWithRun to ensure multiple runs of same test are stored separately
-            const result = await runner.runTest(scenario, runId, testIdWithRun);
-            const testResult = {
-                runId,
-                testId: testIdWithRun,
-                testName: currentCount > 1 ? `${scenario.name} (Run ${currentCount})` : scenario.name,
-                category: scenario.category,
-                status: result.passed ? 'passed' : 'failed',
-                startedAt: new Date(Date.now() - result.durationMs).toISOString(),
-                completedAt: new Date().toISOString(),
-                durationMs: result.durationMs,
-                errorMessage: result.passed ? undefined : result.issues.map(i => i.description).join('; '),
-                transcript: result.transcript,
-                findings: result.issues.map(issue => ({
-                    type: issue.type === 'error' ? 'bug' : 'prompt-issue',
-                    severity: issue.severity,
-                    title: `Issue: ${issue.type}`,
-                    description: issue.description,
-                    affectedStep: `turn-${issue.turnNumber}`,
-                })),
-            };
-            results.push(testResult);
-            const status = result.passed ? '✓ PASSED' : '✗ FAILED';
-            console.log(`[GoalTest] ${status}: ${testIdWithRun} (${result.durationMs}ms, ${result.turnCount} turns)`);
+    try {
+        // Run tests (sequential for now, can add parallel later)
+        for (const scenario of scenariosToRun) {
+            // Increment run count for this scenario
+            const currentCount = (runCountPerScenario.get(scenario.id) || 0) + 1;
+            runCountPerScenario.set(scenario.id, currentCount);
+            // Generate unique test ID with run index (e.g., GOAL-HAPPY-001#2 for second run)
+            const testIdWithRun = currentCount > 1 ? `${scenario.id}#${currentCount}` : scenario.id;
+            console.log(`[GoalTest] Starting: ${testIdWithRun} - ${scenario.name}`);
+            // Create per-test runner with fresh session
+            const flowiseClient = new flowise_client_1.FlowiseClient();
+            const intentDetector = new intent_detector_1.IntentDetector();
+            const runner = new goal_test_runner_1.GoalTestRunner(flowiseClient, db, intentDetector);
+            try {
+                // Pass testIdWithRun to ensure multiple runs of same test are stored separately
+                const result = await runner.runTest(scenario, runId, testIdWithRun);
+                const testResult = {
+                    runId,
+                    testId: testIdWithRun,
+                    testName: currentCount > 1 ? `${scenario.name} (Run ${currentCount})` : scenario.name,
+                    category: scenario.category,
+                    status: result.passed ? 'passed' : 'failed',
+                    startedAt: new Date(Date.now() - result.durationMs).toISOString(),
+                    completedAt: new Date().toISOString(),
+                    durationMs: result.durationMs,
+                    errorMessage: result.passed ? undefined : result.issues.map(i => i.description).join('; '),
+                    transcript: result.transcript,
+                    findings: result.issues.map(issue => ({
+                        type: issue.type === 'error' ? 'bug' : 'prompt-issue',
+                        severity: issue.severity,
+                        title: `Issue: ${issue.type}`,
+                        description: issue.description,
+                        affectedStep: `turn-${issue.turnNumber}`,
+                    })),
+                };
+                results.push(testResult);
+                const status = result.passed ? '✓ PASSED' : '✗ FAILED';
+                console.log(`[GoalTest] ${status}: ${testIdWithRun} (${result.durationMs}ms, ${result.turnCount} turns)`);
+            }
+            catch (error) {
+                const errorResult = {
+                    runId,
+                    testId: testIdWithRun,
+                    testName: currentCount > 1 ? `${scenario.name} (Run ${currentCount})` : scenario.name,
+                    category: scenario.category,
+                    status: 'error',
+                    startedAt: new Date().toISOString(),
+                    completedAt: new Date().toISOString(),
+                    durationMs: 0,
+                    errorMessage: error.message,
+                    transcript: [],
+                    findings: [],
+                };
+                results.push(errorResult);
+                db.saveTestResult(errorResult);
+                console.log(`[GoalTest] ✗ ERROR: ${testIdWithRun} - ${error.message}`);
+            }
         }
-        catch (error) {
-            const errorResult = {
-                runId,
-                testId: testIdWithRun,
-                testName: currentCount > 1 ? `${scenario.name} (Run ${currentCount})` : scenario.name,
-                category: scenario.category,
-                status: 'error',
-                startedAt: new Date().toISOString(),
-                completedAt: new Date().toISOString(),
-                durationMs: 0,
-                errorMessage: error.message,
-                transcript: [],
-                findings: [],
-            };
-            results.push(errorResult);
-            db.saveTestResult(errorResult);
-            console.log(`[GoalTest] ✗ ERROR: ${testIdWithRun} - ${error.message}`);
+        const duration = Date.now() - startTime;
+        const summary = {
+            runId,
+            totalTests: results.length,
+            passed: results.filter(r => r.status === 'passed').length,
+            failed: results.filter(r => r.status === 'failed' || r.status === 'error').length,
+            skipped: results.filter(r => r.status === 'skipped').length,
+            duration,
+            results,
+        };
+        // Update run record
+        db.completeTestRun(runId, summary);
+        runCompleted = true;
+        console.log('\n=== Goal Test Results ===');
+        console.log(`Passed: ${summary.passed}, Failed: ${summary.failed}, Total: ${summary.totalTests}`);
+        console.log(`Duration: ${(duration / 1000).toFixed(1)}s\n`);
+        return summary;
+    }
+    finally {
+        // Clear tracking after run
+        currentRunId = null;
+        currentDb = null;
+        // Ensure run is marked as failed if not completed normally
+        if (!runCompleted) {
+            console.log(`[GoalTest] Run ${runId} did not complete normally, marking as failed`);
+            db.failTestRun(runId, 'Test run did not complete normally');
         }
     }
-    const duration = Date.now() - startTime;
-    const summary = {
-        runId,
-        totalTests: results.length,
-        passed: results.filter(r => r.status === 'passed').length,
-        failed: results.filter(r => r.status === 'failed' || r.status === 'error').length,
-        skipped: results.filter(r => r.status === 'skipped').length,
-        duration,
-        results,
-    };
-    // Update run record
-    db.completeTestRun(runId, summary);
-    console.log('\n=== Goal Test Results ===');
-    console.log(`Passed: ${summary.passed}, Failed: ${summary.failed}, Total: ${summary.totalTests}`);
-    console.log(`Duration: ${(duration / 1000).toFixed(1)}s\n`);
-    return summary;
 }
 const program = new commander_1.Command();
 const reporter = new console_reporter_1.ConsoleReporter();
 const markdownReporter = new markdown_reporter_1.MarkdownReporter();
+// Track current run for cleanup on SIGINT
+let currentRunId = null;
+let currentDb = null;
+// Handle graceful shutdown on SIGINT (Ctrl+C)
+process.on('SIGINT', () => {
+    console.log('\n[GoalTest] Received SIGINT, cleaning up...');
+    if (currentRunId && currentDb) {
+        try {
+            currentDb.abortTestRun(currentRunId);
+            console.log(`[GoalTest] Marked run ${currentRunId} as aborted`);
+        }
+        catch (error) {
+            console.error(`[GoalTest] Failed to abort run: ${error.message}`);
+        }
+    }
+    process.exit(130); // 128 + SIGINT signal number (2)
+});
+// Cleanup stale runs at startup
+function cleanupStaleRuns() {
+    try {
+        const db = new database_1.Database();
+        db.initialize();
+        const cleaned = db.cleanupStaleRuns(2); // Cleanup runs older than 2 hours
+        if (cleaned > 0) {
+            console.log(`[Cleanup] Marked ${cleaned} stale test run(s) as aborted`);
+        }
+    }
+    catch (error) {
+        // Silently ignore cleanup errors
+    }
+}
 program
     .name('test-agent')
     .description('E2E Testing Agent for Flowise Dental Appointment Chatbot')
@@ -224,19 +272,30 @@ program
     .option('-n, --concurrency <number>', 'Number of parallel workers (1-10, default: 1)', '1')
     .action(async (options) => {
     try {
+        // Cleanup stale runs at startup
+        cleanupStaleRuns();
         const agent = new agent_1.TestAgent();
         agent.initialize();
         console.log('\n E2E Test Agent\n');
+        // Load goal tests for summary
+        const dbGoalTests = loadGoalTestsFromDatabase();
+        const allGoalTests = [...goal_happy_path_1.goalHappyPathScenarios, ...dbGoalTests];
+        const goalTestCount = allGoalTests.length;
         const summary = (0, scenarios_1.getScenarioSummary)();
-        console.log(`Available scenarios: ${summary.total}`);
-        console.log(`  - Happy Path: ${summary.byCategory['happy-path']}`);
-        console.log(`  - Edge Cases: ${summary.byCategory['edge-case']}`);
-        console.log(`  - Error Handling: ${summary.byCategory['error-handling']}`);
+        console.log(`Available scenarios: ${summary.total + goalTestCount}`);
+        console.log(`  - Goal Tests: ${goalTestCount} (dynamic flow)`);
+        console.log(`  - Happy Path: ${summary.byCategory['happy-path']} (legacy)`);
+        console.log(`  - Edge Cases: ${summary.byCategory['edge-case']} (legacy)`);
+        console.log(`  - Error Handling: ${summary.byCategory['error-handling']} (legacy)`);
         console.log('');
-        // Parse scenarios option (comma-separated)
-        const scenarioIds = options.scenarios
+        // Parse scenarios option (comma-separated) - also handle single --scenario
+        let scenarioIds = options.scenarios
             ? options.scenarios.split(',').map((s) => s.trim())
             : undefined;
+        // If --scenario (singular) is provided, add it to scenarioIds
+        if (options.scenario) {
+            scenarioIds = scenarioIds ? [...scenarioIds, options.scenario] : [options.scenario];
+        }
         if (scenarioIds) {
             console.log(`Filtering to scenarios: ${scenarioIds.join(', ')}`);
         }
@@ -258,7 +317,6 @@ program
                 console.log('\nAlso running regular tests...\n');
                 const regularResult = await agent.run({
                     category: options.category,
-                    scenario: options.scenario,
                     scenarioIds: regularScenarioIds,
                     failedOnly: options.failed,
                     watch: options.watch,
@@ -280,8 +338,7 @@ program
             // Run regular tests using TestAgent
             result = await agent.run({
                 category: options.category,
-                scenario: options.scenario,
-                scenarioIds, // New: support multiple scenario IDs
+                scenarioIds, // Unified handling for single and multiple scenarios
                 failedOnly: options.failed,
                 watch: options.watch,
                 concurrency,
@@ -477,30 +534,66 @@ program
     .command('scenarios')
     .description('List available test scenarios')
     .option('-c, --category <category>', 'Filter by category')
+    .option('-g, --goal-tests', 'Show only goal-oriented tests')
+    .option('-a, --all', 'Show both legacy and goal-oriented tests')
     .action((options) => {
     try {
         const { allScenarios } = require('./tests/scenarios');
-        let scenarios = allScenarios;
+        // Load goal tests (TypeScript + database)
+        const dbGoalTests = loadGoalTestsFromDatabase();
+        const allGoalTests = [...goal_happy_path_1.goalHappyPathScenarios, ...dbGoalTests];
+        // Determine what to show
+        const showGoalTests = options.goalTests || options.all || !options.category;
+        const showLegacyTests = !options.goalTests || options.all;
+        let scenarios = showLegacyTests ? allScenarios : [];
+        let goalTests = showGoalTests ? allGoalTests : [];
         if (options.category) {
             scenarios = scenarios.filter((s) => s.category === options.category);
+            goalTests = goalTests.filter((s) => s.category === options.category);
         }
         console.log('\n Available Test Scenarios\n');
         console.log('─'.repeat(70));
-        const categories = ['happy-path', 'edge-case', 'error-handling'];
-        for (const cat of categories) {
-            const catScenarios = scenarios.filter((s) => s.category === cat);
-            if (catScenarios.length === 0)
-                continue;
-            console.log(`\n${cat.toUpperCase().replace('-', ' ')}`);
+        // Show goal-oriented tests first
+        if (goalTests.length > 0) {
+            console.log('\n GOAL-ORIENTED TESTS (Dynamic Flow)');
             console.log('');
-            for (const scenario of catScenarios) {
-                console.log(`  ${scenario.id}`);
-                console.log(`    ${scenario.name}`);
-                console.log(`    Steps: ${scenario.steps.length} | Tags: ${scenario.tags.join(', ')}`);
+            const goalCategories = ['happy-path', 'edge-case', 'error-handling'];
+            for (const cat of goalCategories) {
+                const catTests = goalTests.filter((s) => s.category === cat);
+                if (catTests.length === 0)
+                    continue;
+                console.log(`  ${cat.toUpperCase().replace('-', ' ')}`);
+                for (const test of catTests) {
+                    console.log(`    ${test.id}`);
+                    console.log(`      ${test.name}`);
+                    console.log(`      Goals: ${test.goals?.length || 0} | Persona: ${test.persona?.name || 'N/A'}`);
+                }
+                console.log('');
+            }
+        }
+        // Show legacy tests
+        if (scenarios.length > 0) {
+            console.log('\n LEGACY TESTS (Script-Based)');
+            const categories = ['happy-path', 'edge-case', 'error-handling'];
+            for (const cat of categories) {
+                const catScenarios = scenarios.filter((s) => s.category === cat);
+                if (catScenarios.length === 0)
+                    continue;
+                console.log(`\n  ${cat.toUpperCase().replace('-', ' ')}`);
+                for (const scenario of catScenarios) {
+                    console.log(`    ${scenario.id}`);
+                    console.log(`      ${scenario.name}`);
+                    console.log(`      Steps: ${scenario.steps.length} | Tags: ${scenario.tags.join(', ')}`);
+                }
             }
         }
         console.log('\n' + '─'.repeat(70));
-        console.log(`Total: ${scenarios.length} scenarios\n`);
+        console.log(`Total: ${goalTests.length} goal tests + ${scenarios.length} legacy tests = ${goalTests.length + scenarios.length} scenarios`);
+        console.log('\nUsage:');
+        console.log('  npm run run -- --scenario GOAL-HAPPY-001   # Run single goal test');
+        console.log('  npm run run -- --scenarios GOAL-HAPPY-001,GOAL-HAPPY-002');
+        console.log('  npm run run -- --scenario HAPPY-001        # Run single legacy test');
+        console.log('');
     }
     catch (error) {
         reporter.printError(error.message);
@@ -848,6 +941,390 @@ program
         console.error(`\n Error: ${error.message}\n`);
         console.log('\n__RESULT_JSON__');
         console.log(JSON.stringify({ success: false, error: error.message }));
+        process.exit(1);
+    }
+});
+// ============================================================================
+// A/B TESTING COMMANDS
+// ============================================================================
+const ab_testing_1 = require("./services/ab-testing");
+// AB Create command - Create an experiment from a fix
+program
+    .command('ab-create')
+    .description('Create an A/B experiment from a pending fix')
+    .requiredOption('-f, --fix <fixId>', 'Fix ID to test')
+    .option('-n, --name <name>', 'Experiment name')
+    .option('-t, --tests <ids>', 'Test IDs (comma-separated)')
+    .option('--min-samples <n>', 'Minimum sample size per variant', '10')
+    .action(async (options) => {
+    try {
+        const db = new database_1.Database();
+        db.initialize();
+        const { variantService, triggerService, experimentService } = (0, ab_testing_1.getABTestingServices)(db);
+        // Get the fix
+        const fix = db.getGeneratedFix(options.fix);
+        if (!fix) {
+            console.log(`\n Fix not found: ${options.fix}\n`);
+            process.exit(1);
+        }
+        console.log('\n A/B EXPERIMENT CREATION\n');
+        console.log('═'.repeat(60));
+        // Assess impact
+        const impact = triggerService.assessFixImpact(fix);
+        console.log(`\n Impact Assessment:`);
+        console.log(`   Level: ${impact.impactLevel.toUpperCase()}`);
+        console.log(`   Should Test: ${impact.shouldTest ? 'YES' : 'NO'}`);
+        console.log(`   Reason: ${impact.reason}`);
+        if (!impact.shouldTest) {
+            console.log(`\n This fix has minimal impact and may not warrant A/B testing.`);
+            console.log(` Proceeding anyway as requested...\n`);
+        }
+        // Capture baseline if needed
+        console.log(`\n Capturing baseline for ${fix.targetFile}...`);
+        await variantService.captureCurrentBaselines();
+        // Create variant from fix
+        console.log(` Creating treatment variant from fix...`);
+        const treatmentVariant = await variantService.createVariantFromFix(fix);
+        console.log(`   Variant ID: ${treatmentVariant.variantId}`);
+        // Get control (baseline) variant
+        const controlVariant = variantService.getBaselineVariant(fix.targetFile);
+        if (!controlVariant) {
+            console.log(`\n Error: No baseline found for ${fix.targetFile}\n`);
+            process.exit(1);
+        }
+        // Determine test IDs
+        const testIds = options.tests
+            ? options.tests.split(',').map((t) => t.trim())
+            : impact.affectedTests.length > 0
+                ? impact.affectedTests
+                : ['GOAL-HAPPY-001'];
+        // Create experiment
+        const experiment = experimentService.createExperiment({
+            name: options.name || `Test: ${fix.changeDescription.substring(0, 40)}`,
+            hypothesis: `Applying this fix will improve pass rate for ${testIds.join(', ')}`,
+            experimentType: fix.type,
+            controlVariantId: controlVariant.variantId,
+            treatmentVariantIds: [treatmentVariant.variantId],
+            testIds,
+            minSampleSize: parseInt(options.minSamples, 10) || 10,
+        });
+        console.log(`\n Experiment Created!`);
+        console.log('─'.repeat(60));
+        console.log(`   ID: ${experiment.experimentId}`);
+        console.log(`   Name: ${experiment.name}`);
+        console.log(`   Status: ${experiment.status}`);
+        console.log(`   Control: ${controlVariant.variantId}`);
+        console.log(`   Treatment: ${treatmentVariant.variantId}`);
+        console.log(`   Tests: ${testIds.join(', ')}`);
+        console.log(`   Min Samples: ${experiment.minSampleSize} per variant`);
+        console.log(`\n Next steps:`);
+        console.log(`   1. Start experiment: npm run ab-run ${experiment.experimentId}`);
+        console.log(`   2. View status: npm run ab-status ${experiment.experimentId}`);
+        console.log(`   3. Conclude: npm run ab-conclude ${experiment.experimentId}\n`);
+    }
+    catch (error) {
+        reporter.printError(error.message);
+        process.exit(1);
+    }
+});
+// AB Run command - Run an experiment
+program
+    .command('ab-run <experimentId>')
+    .description('Run an A/B experiment')
+    .option('-n, --iterations <n>', 'Number of iterations per variant', '10')
+    .action(async (experimentId, options) => {
+    try {
+        const db = new database_1.Database();
+        db.initialize();
+        const { experimentService, variantService } = (0, ab_testing_1.getABTestingServices)(db);
+        // Get experiment
+        const experiment = experimentService.getExperiment(experimentId);
+        if (!experiment) {
+            console.log(`\n Experiment not found: ${experimentId}\n`);
+            process.exit(1);
+        }
+        console.log('\n A/B EXPERIMENT RUNNER\n');
+        console.log('═'.repeat(60));
+        console.log(`   Experiment: ${experiment.name}`);
+        console.log(`   ID: ${experimentId}`);
+        console.log(`   Status: ${experiment.status}`);
+        // Start experiment if in draft
+        if (experiment.status === 'draft') {
+            experimentService.startExperiment(experimentId);
+            console.log(`   Status updated to: running`);
+        }
+        else if (experiment.status !== 'running') {
+            console.log(`\n Experiment is ${experiment.status}, cannot run.\n`);
+            process.exit(1);
+        }
+        const iterations = parseInt(options.iterations, 10) || 10;
+        const totalRuns = iterations * 2; // Control + treatment
+        console.log(`\n Running ${totalRuns} test iterations (${iterations} per variant)...\n`);
+        // Get goal test scenarios
+        const dbScenarios = loadGoalTestsFromDatabase();
+        const allGoalScenarios = [...goal_happy_path_1.goalHappyPathScenarios, ...dbScenarios];
+        let controlRuns = 0;
+        let treatmentRuns = 0;
+        let controlPassed = 0;
+        let treatmentPassed = 0;
+        // Run iterations
+        for (let i = 0; i < totalRuns; i++) {
+            // Select variant
+            const selection = experimentService.selectVariant(experimentId, experiment.testIds[0]);
+            const isControl = selection.role === 'control';
+            console.log(`[${i + 1}/${totalRuns}] Running with ${isControl ? 'CONTROL' : 'TREATMENT'} variant...`);
+            // Apply variant
+            await variantService.applyVariant(selection.variantId);
+            try {
+                // Run a random test from the experiment's test IDs
+                const testId = experiment.testIds[Math.floor(Math.random() * experiment.testIds.length)];
+                const scenario = allGoalScenarios.find(s => s.id === testId);
+                if (!scenario) {
+                    console.log(`   Skipping: Test ${testId} not found`);
+                    continue;
+                }
+                // Create runner
+                const flowiseClient = new flowise_client_1.FlowiseClient();
+                const intentDetector = new intent_detector_1.IntentDetector();
+                const runner = new goal_test_runner_1.GoalTestRunner(flowiseClient, db, intentDetector);
+                const runId = db.createTestRun();
+                const result = await runner.runTest(scenario, runId);
+                // Record experiment run
+                experimentService.recordTestResult(experimentId, runId, testId, selection, {
+                    passed: result.passed,
+                    turnCount: result.turnCount,
+                    durationMs: result.durationMs,
+                    goalCompletionRate: result.goalResults.filter(g => g.passed).length / Math.max(result.goalResults.length, 1),
+                    constraintViolations: result.constraintViolations.length,
+                    errorOccurred: !!result.issues.find(i => i.type === 'error'),
+                    goalsCompleted: result.goalResults.filter(g => g.passed).length,
+                    goalsTotal: result.goalResults.length,
+                    issuesDetected: result.issues.length,
+                });
+                // Track stats
+                if (isControl) {
+                    controlRuns++;
+                    if (result.passed)
+                        controlPassed++;
+                }
+                else {
+                    treatmentRuns++;
+                    if (result.passed)
+                        treatmentPassed++;
+                }
+                const status = result.passed ? '✓' : '✗';
+                console.log(`   ${status} ${testId} (${result.turnCount} turns, ${result.durationMs}ms)`);
+            }
+            finally {
+                // Always rollback
+                await variantService.rollback(selection.targetFile);
+            }
+        }
+        // Print summary
+        console.log('\n');
+        console.log('═'.repeat(60));
+        console.log(' EXPERIMENT PROGRESS');
+        console.log('═'.repeat(60));
+        console.log(`\n Control:   ${controlPassed}/${controlRuns} passed (${controlRuns > 0 ? ((controlPassed / controlRuns) * 100).toFixed(1) : 0}%)`);
+        console.log(` Treatment: ${treatmentPassed}/${treatmentRuns} passed (${treatmentRuns > 0 ? ((treatmentPassed / treatmentRuns) * 100).toFixed(1) : 0}%)`);
+        // Check if should conclude
+        const conclusion = experimentService.shouldConcludeExperiment(experimentId);
+        console.log(`\n ${conclusion.message}`);
+        if (conclusion.shouldConclude) {
+            console.log(`\n Ready to conclude. Run: npm run ab-conclude ${experimentId}\n`);
+        }
+        else {
+            console.log(`\n Continue running: npm run ab-run ${experimentId} -n ${iterations}\n`);
+        }
+    }
+    catch (error) {
+        reporter.printError(error.message);
+        process.exit(1);
+    }
+});
+// AB Status command - View experiment status
+program
+    .command('ab-status [experimentId]')
+    .description('View A/B experiment status and results')
+    .option('-a, --all', 'Show all experiments')
+    .action((experimentId, options) => {
+    try {
+        const db = new database_1.Database();
+        db.initialize();
+        const { experimentService } = (0, ab_testing_1.getABTestingServices)(db);
+        if (options.all || !experimentId) {
+            // List all experiments
+            const experiments = experimentService.getAllExperiments({ limit: 20 });
+            if (experiments.length === 0) {
+                console.log('\n No experiments found.');
+                console.log(' Create one with: npm run ab-create --fix <fixId>\n');
+                return;
+            }
+            console.log('\n A/B EXPERIMENTS\n');
+            console.log('═'.repeat(70));
+            for (const exp of experiments) {
+                const summary = experimentService.getExperimentSummary(exp.experimentId);
+                const statusIcon = exp.status === 'running' ? '▶' :
+                    exp.status === 'completed' ? '✓' :
+                        exp.status === 'aborted' ? '✗' : '○';
+                console.log(`\n${statusIcon} ${exp.experimentId}`);
+                console.log(`  Name: ${exp.name}`);
+                console.log(`  Status: ${exp.status}`);
+                console.log(`  Samples: Control ${summary.controlSamples}/${exp.minSampleSize}, Treatment ${summary.treatmentSamples}/${exp.minSampleSize}`);
+                if (summary.controlPassRate !== undefined) {
+                    console.log(`  Pass Rates: Control ${(summary.controlPassRate * 100).toFixed(1)}%, Treatment ${(summary.treatmentPassRate * 100).toFixed(1)}%`);
+                }
+                if (summary.isSignificant !== undefined) {
+                    console.log(`  Significant: ${summary.isSignificant ? 'YES' : 'NO'} (p=${summary.pValue?.toFixed(4)})`);
+                }
+                if (summary.conclusion) {
+                    console.log(`  Conclusion: ${summary.conclusion}`);
+                }
+            }
+            console.log('\n' + '═'.repeat(70) + '\n');
+            return;
+        }
+        // Show specific experiment
+        const experiment = experimentService.getExperiment(experimentId);
+        if (!experiment) {
+            console.log(`\n Experiment not found: ${experimentId}\n`);
+            process.exit(1);
+        }
+        const summary = experimentService.getExperimentSummary(experimentId);
+        const analysis = experiment.status === 'running' || experiment.status === 'completed'
+            ? experimentService.getExperimentStats(experimentId)
+            : null;
+        console.log('\n A/B EXPERIMENT DETAILS\n');
+        console.log('═'.repeat(70));
+        console.log(`\n Experiment: ${experiment.name}`);
+        console.log(` ID: ${experimentId}`);
+        console.log(` Status: ${experiment.status}`);
+        console.log(` Hypothesis: ${experiment.hypothesis}`);
+        console.log(` Tests: ${experiment.testIds.join(', ')}`);
+        console.log(` Created: ${experiment.createdAt}`);
+        if (experiment.startedAt)
+            console.log(` Started: ${experiment.startedAt}`);
+        if (experiment.completedAt)
+            console.log(` Completed: ${experiment.completedAt}`);
+        console.log('\n VARIANTS');
+        console.log('─'.repeat(70));
+        for (const v of experiment.variants) {
+            console.log(`   ${v.role.toUpperCase()}: ${v.variantId} (${v.weight}% traffic)`);
+        }
+        console.log('\n SAMPLE SIZES');
+        console.log('─'.repeat(70));
+        console.log(`   Control: ${summary.controlSamples}/${experiment.minSampleSize} (min required)`);
+        console.log(`   Treatment: ${summary.treatmentSamples}/${experiment.minSampleSize} (min required)`);
+        if (analysis) {
+            console.log('\n RESULTS');
+            console.log('─'.repeat(70));
+            console.log(`   Control Pass Rate: ${(analysis.controlPassRate * 100).toFixed(1)}%`);
+            console.log(`   Treatment Pass Rate: ${(analysis.treatmentPassRate * 100).toFixed(1)}%`);
+            console.log(`   Difference: ${analysis.passRateDifference >= 0 ? '+' : ''}${(analysis.passRateDifference * 100).toFixed(1)}%`);
+            console.log(`   Lift: ${analysis.passRateLift >= 0 ? '+' : ''}${analysis.passRateLift.toFixed(1)}%`);
+            console.log('\n STATISTICAL SIGNIFICANCE');
+            console.log('─'.repeat(70));
+            console.log(`   Pass Rate p-value: ${analysis.passRatePValue.toFixed(4)}`);
+            console.log(`   Significant (p < 0.05): ${analysis.passRateSignificant ? 'YES' : 'NO'}`);
+            console.log(`   Confidence Level: ${(analysis.confidenceLevel * 100).toFixed(1)}%`);
+            console.log('\n RECOMMENDATION');
+            console.log('─'.repeat(70));
+            console.log(`   ${analysis.recommendationReason}`);
+            console.log(`   Action: ${analysis.recommendation.toUpperCase()}`);
+        }
+        if (experiment.conclusion) {
+            console.log('\n CONCLUSION');
+            console.log('─'.repeat(70));
+            console.log(`   ${experiment.conclusion}`);
+            if (experiment.winningVariantId) {
+                console.log(`   Winner: ${experiment.winningVariantId}`);
+            }
+        }
+        console.log('\n' + '═'.repeat(70) + '\n');
+    }
+    catch (error) {
+        reporter.printError(error.message);
+        process.exit(1);
+    }
+});
+// AB Conclude command - Conclude an experiment
+program
+    .command('ab-conclude <experimentId>')
+    .description('Conclude an experiment and optionally adopt winner')
+    .option('--adopt', 'Adopt winning variant as new baseline')
+    .action(async (experimentId, options) => {
+    try {
+        const db = new database_1.Database();
+        db.initialize();
+        const { experimentService } = (0, ab_testing_1.getABTestingServices)(db);
+        const experiment = experimentService.getExperiment(experimentId);
+        if (!experiment) {
+            console.log(`\n Experiment not found: ${experimentId}\n`);
+            process.exit(1);
+        }
+        if (experiment.status === 'completed') {
+            console.log(`\n Experiment already completed.\n`);
+            if (options.adopt && experiment.winningVariantId) {
+                console.log(` Adopting winner...`);
+                await experimentService.adoptWinner(experimentId);
+                console.log(` Winner ${experiment.winningVariantId} adopted as new baseline.\n`);
+            }
+            return;
+        }
+        console.log('\n CONCLUDING EXPERIMENT\n');
+        console.log('═'.repeat(60));
+        // Get final analysis
+        const analysis = experimentService.getExperimentStats(experimentId);
+        console.log(`\n Final Results:`);
+        console.log(`   Control: ${(analysis.controlPassRate * 100).toFixed(1)}% pass rate (n=${analysis.controlSampleSize})`);
+        console.log(`   Treatment: ${(analysis.treatmentPassRate * 100).toFixed(1)}% pass rate (n=${analysis.treatmentSampleSize})`);
+        console.log(`   p-value: ${analysis.passRatePValue.toFixed(4)}`);
+        console.log(`   Significant: ${analysis.isSignificant ? 'YES' : 'NO'}`);
+        // Conclude
+        experimentService.completeExperiment(experimentId);
+        const updatedExp = experimentService.getExperiment(experimentId);
+        console.log(`\n Conclusion: ${updatedExp?.conclusion}`);
+        if (updatedExp?.winningVariantId) {
+            console.log(` Winner: ${updatedExp.winningVariantId}`);
+            if (options.adopt) {
+                console.log(`\n Adopting winner as new baseline...`);
+                await experimentService.adoptWinner(experimentId);
+                console.log(` Done! The winning variant is now the baseline.\n`);
+            }
+            else {
+                console.log(`\n To adopt the winner: npm run ab-conclude ${experimentId} --adopt\n`);
+            }
+        }
+        else {
+            console.log(`\n No clear winner. Consider keeping the control variant.\n`);
+        }
+    }
+    catch (error) {
+        reporter.printError(error.message);
+        process.exit(1);
+    }
+});
+// AB Stats command - View A/B testing statistics
+program
+    .command('ab-stats')
+    .description('View A/B testing framework statistics')
+    .action(() => {
+    try {
+        const db = new database_1.Database();
+        db.initialize();
+        const stats = db.getABTestingStats();
+        console.log('\n A/B TESTING STATISTICS\n');
+        console.log('═'.repeat(50));
+        console.log(`\n Experiments:`);
+        console.log(`   Total: ${stats.totalExperiments}`);
+        console.log(`   Running: ${stats.runningExperiments}`);
+        console.log(`   Completed: ${stats.completedExperiments}`);
+        console.log(`\n Variants: ${stats.totalVariants}`);
+        console.log(` Experiment Runs: ${stats.totalRuns}`);
+        console.log('\n' + '═'.repeat(50) + '\n');
+    }
+    catch (error) {
+        reporter.printError(error.message);
         process.exit(1);
     }
 });

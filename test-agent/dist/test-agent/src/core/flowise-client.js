@@ -12,15 +12,39 @@ const axios_1 = __importDefault(require("axios"));
 const uuid_1 = require("uuid");
 const config_1 = require("../config/config");
 class FlowiseClient {
-    constructor(sessionId) {
+    /**
+     * Create a new FlowiseClient
+     * @param sessionId - Optional session ID (generates UUID if not provided)
+     * @param endpoint - Optional endpoint URL override (uses config default if not provided)
+     */
+    constructor(sessionId, endpoint) {
         this.sessionId = sessionId || (0, uuid_1.v4)();
+        this.endpoint = endpoint || config_1.config.flowise.endpoint;
         this.client = axios_1.default.create({
-            baseURL: config_1.config.flowise.endpoint,
+            baseURL: this.endpoint,
             timeout: config_1.config.flowise.timeout,
             headers: {
                 'Content-Type': 'application/json',
             },
         });
+    }
+    /**
+     * Get the current endpoint URL
+     */
+    getEndpoint() {
+        return this.endpoint;
+    }
+    /**
+     * Create a FlowiseClient for a specific sandbox endpoint
+     */
+    static forSandbox(endpoint, sessionId) {
+        return new FlowiseClient(sessionId, endpoint);
+    }
+    /**
+     * Create a FlowiseClient using the default production endpoint
+     */
+    static forProduction(sessionId) {
+        return new FlowiseClient(sessionId, config_1.config.flowise.endpoint);
     }
     /**
      * Send a message to the Flowise API
