@@ -606,11 +606,13 @@ const ENDPOINTS: EndpointConfig[] = [
     category: 'patient',
     description: 'Register a new patient',
     sampleData: {
-      firstName: 'TestJohn',
-      lastName: `AutoTest${Date.now().toString().slice(-4)}`,
-      birthday: '01/15/2015',
-      phone: '7205559999',
-      gender: 'M'
+      patientFirstName: 'TestJohn',
+      patientLastName: `AutoTest${Date.now().toString().slice(-4)}`,
+      birthdayDateTime: '01/15/2015',
+      phoneNumber: '7205559999',
+      gender: 'M',
+      providerGUID: API_CONFIG.defaults.providerGUID,
+      locationGUID: API_CONFIG.defaults.locationGUID
     },
     formatResult: (data) => <GenericSuccessFormatter data={data} />
   },
