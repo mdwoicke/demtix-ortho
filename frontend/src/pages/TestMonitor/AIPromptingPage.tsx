@@ -131,8 +131,11 @@ const PromptFileList: React.FC<{
   files: PromptFile[];
   selectedFileKey: string;
   loading?: boolean;
+  context?: PromptContext;
+  copyingFile?: string | null;
   onSelectFile: (fileKey: string) => void;
-}> = ({ files, selectedFileKey, loading = false, onSelectFile }) => {
+  onCopyFromProduction?: (fileKey: string) => void;
+}> = ({ files, selectedFileKey, loading = false, context = 'production', copyingFile, onSelectFile, onCopyFromProduction }) => {
   if (loading && files.length === 0) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -140,6 +143,8 @@ const PromptFileList: React.FC<{
       </div>
     );
   }
+
+  const isSandbox = context !== 'production';
 
   return (
     <div className="space-y-2">
@@ -154,20 +159,26 @@ const PromptFileList: React.FC<{
 
       {files.map(file => {
         const isSelected = selectedFileKey === file.fileKey;
+        const fileExists = file.exists !== false; // true for production (undefined) or sandbox files that exist
+        const isCopying = copyingFile === file.fileKey;
 
         return (
           <div
             key={file.fileKey}
-            onClick={() => onSelectFile(file.fileKey)}
-            className={`flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-all border ${
-              isSelected
-                ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+            onClick={() => fileExists && onSelectFile(file.fileKey)}
+            className={`flex items-center justify-between px-3 py-2.5 rounded-lg transition-all border ${
+              !fileExists
+                ? 'border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/50 cursor-default'
+                : isSelected
+                ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 cursor-pointer'
+                : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer'
             }`}
           >
             <div className="flex items-center gap-3">
               <div className={`p-1.5 rounded ${
-                isSelected
+                !fileExists
+                  ? 'text-gray-400 dark:text-gray-500 bg-gray-200 dark:bg-gray-700'
+                  : isSelected
                   ? 'text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/50'
                   : 'text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700'
               }`}>
@@ -177,23 +188,31 @@ const PromptFileList: React.FC<{
               <div>
                 <div className="flex items-center gap-2">
                   <span className={`text-sm font-medium ${
-                    isSelected
+                    !fileExists
+                      ? 'text-gray-500 dark:text-gray-400'
+                      : isSelected
                       ? 'text-blue-700 dark:text-blue-300'
                       : 'text-gray-900 dark:text-white'
                   }`}>
                     {FILE_KEY_DISPLAY_NAMES[file.fileKey] || file.displayName}
                   </span>
 
-                  <span className={`px-1.5 py-0.5 text-xs font-medium rounded ${
-                    isSelected
-                      ? 'bg-blue-200 dark:bg-blue-800 text-blue-800 dark:text-blue-200'
-                      : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
-                  }`}>
-                    v{file.version}
-                  </span>
+                  {fileExists ? (
+                    <span className={`px-1.5 py-0.5 text-xs font-medium rounded ${
+                      isSelected
+                        ? 'bg-blue-200 dark:bg-blue-800 text-blue-800 dark:text-blue-200'
+                        : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
+                    }`}>
+                      v{file.version}
+                    </span>
+                  ) : (
+                    <span className="px-1.5 py-0.5 text-xs font-medium rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                      Not in sandbox
+                    </span>
+                  )}
                 </div>
 
-                {file.updatedAt && (
+                {fileExists && file.updatedAt && (
                   <div className="flex items-center gap-2 mt-0.5 text-xs text-gray-500 dark:text-gray-400">
                     <span>Updated {formatTimeAgo(file.updatedAt)}</span>
                   </div>
@@ -201,16 +220,41 @@ const PromptFileList: React.FC<{
               </div>
             </div>
 
-            <svg
-              className={`w-4 h-4 transition-transform ${
-                isSelected ? 'rotate-90 text-blue-500' : 'text-gray-400'
-              }`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
+            {!fileExists && isSandbox && onCopyFromProduction ? (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCopyFromProduction(file.fileKey);
+                }}
+                disabled={isCopying}
+                className="flex items-center gap-1 px-2 py-1 text-xs font-medium rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors disabled:opacity-50"
+              >
+                {isCopying ? (
+                  <>
+                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600"></div>
+                    <span>Copying...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    <span>Copy from Prod</span>
+                  </>
+                )}
+              </button>
+            ) : fileExists ? (
+              <svg
+                className={`w-4 h-4 transition-transform ${
+                  isSelected ? 'rotate-90 text-blue-500' : 'text-gray-400'
+                }`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            ) : null}
           </div>
         );
       })}
@@ -1393,6 +1437,8 @@ const AIPromptingPage: React.FC = () => {
   // Reference documents state
   const [referenceDocs, setReferenceDocs] = useState<ReferenceDocument[]>([]);
   const [referenceDocsLoading, setReferenceDocsLoading] = useState(false);
+  // Sandbox copy state
+  const [copyingFile, setCopyingFile] = useState<string | null>(null);
 
   // Load initial data and when context changes
   useEffect(() => {
@@ -1417,6 +1463,29 @@ const AIPromptingPage: React.FC = () => {
 
     // Update context (this triggers useEffect to reload files)
     setSelectedContext(newContext);
+  };
+
+  // Copy file from production to current sandbox
+  const handleCopyFromProduction = async (fileKey: string) => {
+    if (selectedContext === 'production') return;
+
+    setCopyingFile(fileKey);
+    setError(null);
+
+    try {
+      const result = await testMonitorApi.copyToSandbox(fileKey, selectedContext as 'sandbox_a' | 'sandbox_b');
+      setSuccessMessage(result.message);
+
+      // Reload files to show updated state
+      await loadPromptFiles();
+
+      // Select the newly copied file
+      setSelectedFileKey(fileKey);
+    } catch (err: any) {
+      setError(err.message || 'Failed to copy file from production');
+    } finally {
+      setCopyingFile(null);
+    }
   };
 
   // Load version history when file or context changes
@@ -1853,7 +1922,10 @@ const AIPromptingPage: React.FC = () => {
             files={promptFiles}
             selectedFileKey={selectedFileKey}
             loading={filesLoading}
+            context={selectedContext}
+            copyingFile={copyingFile}
             onSelectFile={setSelectedFileKey}
+            onCopyFromProduction={handleCopyFromProduction}
           />
 
           {/* Reference Documents for selected file */}

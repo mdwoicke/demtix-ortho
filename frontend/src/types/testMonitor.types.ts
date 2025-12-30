@@ -139,6 +139,9 @@ export interface PromptFile {
   version: number;
   lastFixId: string | null;
   updatedAt: string;
+  // Sandbox-specific fields
+  exists?: boolean;  // Whether file exists in sandbox (for "Copy from Production" UI)
+  fileType?: 'markdown' | 'javascript';  // File type for sandbox files
 }
 
 export interface PromptVersionHistory {

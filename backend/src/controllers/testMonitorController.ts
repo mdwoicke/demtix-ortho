@@ -991,16 +991,19 @@ export async function getPromptFiles(req: Request, res: Response, next: NextFunc
     `).all(context) as any[];
     db.close();
 
-    // Map to same format as production files, including files that don't exist yet
+    // Map to same format as production files (PromptFile type)
     const files = ['system_prompt', 'scheduling_tool', 'patient_tool'].map(fileKey => {
       const sandboxFile = sandboxFiles.find((f: any) => f.file_key === fileKey);
       return {
         fileKey,
+        filePath: `sandbox://${context}/${fileKey}`, // Virtual path for sandbox files
         displayName: FILE_KEY_DISPLAY_NAMES[fileKey] || fileKey,
-        fileType: fileKey === 'system_prompt' ? 'markdown' : 'javascript',
         version: sandboxFile?.version || 0,
+        lastFixId: null, // Sandbox files don't track fix IDs
+        updatedAt: sandboxFile?.updated_at || new Date().toISOString(),
+        // Additional sandbox-specific fields
         exists: !!sandboxFile,
-        updatedAt: sandboxFile?.updated_at || null,
+        fileType: fileKey === 'system_prompt' ? 'markdown' : 'javascript',
       };
     });
 
@@ -1379,6 +1382,92 @@ export async function getPromptVersionDiff(req: Request, res: Response, next: Ne
     const diff = promptService.getVersionDiff(fileKey, version1, version2);
     res.json({ success: true, data: diff });
   } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/test-monitor/prompts/:fileKey/copy-to-sandbox
+ * Copy production file content to a sandbox
+ */
+export async function copyToSandbox(req: Request, res: Response, next: NextFunction): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+  try {
+    const { fileKey } = req.params;
+    const { sandboxId } = req.body as { sandboxId: 'sandbox_a' | 'sandbox_b' };
+
+    if (!sandboxId || !['sandbox_a', 'sandbox_b'].includes(sandboxId)) {
+      res.status(400).json({ success: false, error: 'sandboxId must be "sandbox_a" or "sandbox_b"' });
+      return;
+    }
+
+    // Get production content
+    const productionContent = promptService.getPromptContent(fileKey);
+    if (!productionContent) {
+      res.status(404).json({ success: false, error: `Production file not found: ${fileKey}` });
+      return;
+    }
+
+    // Save to sandbox
+    db = new BetterSqlite3(TEST_AGENT_DB_PATH);
+
+    // Check if file already exists in sandbox
+    const existing = db.prepare(`
+      SELECT id, version FROM ab_sandbox_files
+      WHERE sandbox_id = ? AND file_key = ?
+    `).get(sandboxId, fileKey) as { id: number; version: number } | undefined;
+
+    const now = new Date().toISOString();
+    const fileType = fileKey === 'system_prompt' ? 'markdown' : 'javascript';
+    const displayName = FILE_KEY_DISPLAY_NAMES[fileKey] || fileKey;
+
+    if (existing) {
+      // Update existing file
+      db.prepare(`
+        UPDATE ab_sandbox_files
+        SET content = ?, version = ?, change_description = ?, updated_at = ?
+        WHERE sandbox_id = ? AND file_key = ?
+      `).run(
+        productionContent.content,
+        existing.version + 1,
+        `Copied from production v${productionContent.version}`,
+        now,
+        sandboxId,
+        fileKey
+      );
+    } else {
+      // Insert new file
+      db.prepare(`
+        INSERT INTO ab_sandbox_files (sandbox_id, file_key, file_type, display_name, content, version, change_description, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        sandboxId,
+        fileKey,
+        fileType,
+        displayName,
+        productionContent.content,
+        1,
+        `Copied from production v${productionContent.version}`,
+        now,
+        now
+      );
+    }
+
+    db.close();
+    db = null;
+
+    res.json({
+      success: true,
+      data: {
+        fileKey,
+        sandboxId,
+        version: existing ? existing.version + 1 : 1,
+        copiedFromVersion: productionContent.version,
+        message: `Successfully copied ${displayName} to ${sandboxId}`,
+      },
+    });
+  } catch (error) {
+    if (db) db.close();
     next(error);
   }
 }

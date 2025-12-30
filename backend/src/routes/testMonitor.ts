@@ -128,6 +128,9 @@ router.post('/prompts/:fileKey/rollback', testMonitorController.rollbackPromptVe
 // GET /api/test-monitor/prompts/:fileKey/diff - Get diff between two versions
 router.get('/prompts/:fileKey/diff', testMonitorController.getPromptVersionDiff);
 
+// POST /api/test-monitor/prompts/:fileKey/copy-to-sandbox - Copy production file to sandbox
+router.post('/prompts/:fileKey/copy-to-sandbox', testMonitorController.copyToSandbox);
+
 // ============================================================================
 // TEST CASE MANAGEMENT ROUTES
 // ============================================================================

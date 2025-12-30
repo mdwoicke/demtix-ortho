@@ -364,6 +364,26 @@ export async function getPromptVersionContent(
 }
 
 /**
+ * Copy a production file to a sandbox
+ */
+export async function copyToSandbox(
+  fileKey: string,
+  sandboxId: 'sandbox_a' | 'sandbox_b'
+): Promise<{ fileKey: string; sandboxId: string; version: number; copiedFromVersion: number; message: string }> {
+  const response = await post<TestMonitorApiResponse<{
+    fileKey: string;
+    sandboxId: string;
+    version: number;
+    copiedFromVersion: number;
+    message: string;
+  }>>(
+    `/test-monitor/prompts/${fileKey}/copy-to-sandbox`,
+    { sandboxId }
+  );
+  return response.data;
+}
+
+/**
  * Apply a fix to a prompt and create a new version
  */
 export async function applyFixToPrompt(
