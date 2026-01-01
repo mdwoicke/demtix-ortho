@@ -46,3 +46,9 @@ temp/
 
 # Build artifacts
 test-agent/dist/
+
+# Claude Code local settings
+.claude/
+
+# Malformed paths (Windows artifacts)
+*•*
