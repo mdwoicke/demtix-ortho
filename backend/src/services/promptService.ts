@@ -134,19 +134,26 @@ export function detectUnescapedBraces(content: string): {
 // Path to test-agent database
 const TEST_AGENT_DB_PATH = path.resolve(__dirname, '../../../test-agent/data/test-results.db');
 
-// Prompt file mappings
+// V1 Directory - canonical source for production files
+const V1_DIR = path.resolve(__dirname, '../../../docs/v1');
+
+// Prompt file mappings - Updated to use V1 directory
 const PROMPT_FILE_MAPPINGS: Record<string, { path: string; displayName: string }> = {
   system_prompt: {
-    path: path.resolve(__dirname, '../../../docs/Chord_Cloud9_SystemPrompt_V3_ADVANCED.md'),
+    path: path.join(V1_DIR, 'Chord_Cloud9_SystemPrompt.md'),
     displayName: 'System Prompt',
   },
   scheduling_tool: {
-    path: path.resolve(__dirname, '../../../docs/chord_dso_scheduling-V3-ENHANCED.js'),
+    path: path.join(V1_DIR, 'schedule_appointment_dso_Tool.json'),
     displayName: 'Scheduling Tool',
   },
   patient_tool: {
-    path: path.resolve(__dirname, '../../../docs/chord_dso_patient-V3-ENHANCED.js'),
+    path: path.join(V1_DIR, 'chord_dso_patient_Tool.json'),
     displayName: 'Patient Tool',
+  },
+  nodered_flow: {
+    path: path.join(V1_DIR, 'nodered_Cloud9_flows.json'),
+    displayName: 'Node Red Flows',
   },
 };
 
@@ -173,19 +180,26 @@ function validateContent(content: string, fileKey: string): ValidationResult {
     return { valid: false, errors, warnings };
   }
 
-  // Determine if this is a JavaScript file
-  const isJavaScriptFile = fileKey.includes('tool') || fileKey.endsWith('.js');
+  // Determine file type based on file key
+  const isJsonFile = fileKey.includes('tool') || fileKey === 'nodered_flow' || fileKey.endsWith('.json');
+  const isJavaScriptFile = fileKey.endsWith('.js');
 
-  // For JS files, validate syntax using vm.compileFunction (comprehensive validation)
-  // Skip simple brace validation for JS files - vm.compileFunction handles this better
-  if (isJavaScriptFile) {
+  if (isJsonFile) {
+    // For JSON files (tools, Node Red flows), validate JSON syntax
+    const jsonValidation = validateJsonSyntax(content, fileKey);
+    if (!jsonValidation.valid) {
+      errors.push(...jsonValidation.errors);
+    }
+    warnings.push(...jsonValidation.warnings);
+  } else if (isJavaScriptFile) {
+    // For JS files, validate syntax using vm.compileFunction (comprehensive validation)
     const jsValidation = validateJavaScriptSyntax(content);
     if (!jsValidation.valid) {
       errors.push(...jsValidation.errors);
     }
     warnings.push(...jsValidation.warnings);
   } else {
-    // For non-JS files (prompts, markdown), validate braces are balanced
+    // For non-JS/JSON files (prompts, markdown), validate braces are balanced
     const braceValidation = validateBraces(content);
     if (!braceValidation.valid) {
       errors.push(...braceValidation.errors);
@@ -197,6 +211,45 @@ function validateContent(content: string, fileKey: string): ValidationResult {
     errors,
     warnings,
   };
+}
+
+/**
+ * Validate JSON syntax and structure for tool/flow files
+ */
+function validateJsonSyntax(content: string, fileKey: string): ValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  try {
+    const parsed = JSON.parse(content);
+
+    if (fileKey === 'nodered_flow') {
+      // Node Red flow validation
+      if (!Array.isArray(parsed)) {
+        errors.push('Node Red flow must be a JSON array');
+      } else {
+        const nodeTypes = new Set(parsed.map((n: any) => n.type));
+        if (!nodeTypes.has('tab')) {
+          warnings.push('Flow does not contain a tab node');
+        }
+      }
+    } else if (fileKey.includes('tool')) {
+      // Flowise tool validation
+      const requiredFields = ['name', 'description', 'schema', 'func'];
+      for (const field of requiredFields) {
+        if (!parsed[field]) {
+          errors.push(`Missing required field: ${field}`);
+        }
+      }
+      if (parsed.schema && !parsed.schema.properties) {
+        errors.push('Schema missing properties definition');
+      }
+    }
+  } catch (error: any) {
+    errors.push(`Invalid JSON: ${error.message}`);
+  }
+
+  return { valid: errors.length === 0, errors, warnings };
 }
 
 /**
@@ -1272,6 +1325,11 @@ export function applyBatchFixes(fixIds: string[]): {
  */
 function determineFileKey(targetFile: string, type: string): string | null {
   const targetLower = targetFile?.toLowerCase() || '';
+
+  // Check for Node Red flow files
+  if (targetLower.includes('nodered') || targetLower.includes('flow')) {
+    return 'nodered_flow';
+  }
 
   // Check for scheduling-related files
   if (targetLower.includes('schedule') || targetLower.includes('scheduling') || targetLower.includes('appointment')) {

@@ -327,4 +327,23 @@ router.put('/references/:documentId', testMonitorController.updateReferenceDocum
 // DELETE /api/test-monitor/references/:documentId - Delete reference document
 router.delete('/references/:documentId', testMonitorController.deleteReferenceDocument);
 
+// ============================================================================
+// V1 FILE MANAGEMENT ROUTES
+// ============================================================================
+
+// GET /api/test-monitor/v1-files/status - Get V1 files health status
+router.get('/v1-files/status', testMonitorController.getV1FilesStatus);
+
+// POST /api/test-monitor/v1-files/sync - Sync V1 files to nodered
+router.post('/v1-files/sync', testMonitorController.syncV1FilesToNodered);
+
+// GET /api/test-monitor/v1-files - List all V1 files
+router.get('/v1-files', testMonitorController.getV1Files);
+
+// GET /api/test-monitor/v1-files/:fileKey - Get specific V1 file
+router.get('/v1-files/:fileKey', testMonitorController.getV1File);
+
+// POST /api/test-monitor/v1-files/:fileKey/validate - Validate V1 file content
+router.post('/v1-files/:fileKey/validate', testMonitorController.validateV1File);
+
 export default router;

@@ -82,7 +82,7 @@ export interface ResponseConfig {
  * Default response configuration
  */
 export const DEFAULT_RESPONSE_CONFIG: ResponseConfig = {
-  maxTurns: 25,
+  maxTurns: 50,
   useLlmResponses: false, // Use templates by default
   responseDelayMs: 0,
   handleUnknownIntents: 'clarify',

@@ -53,7 +53,7 @@ const NODRED_API_CONFIG = {
     apptTypeGUID: '8fc9d063-ae46-4975-a5ae-734c6efe341a',
     scheduleViewGUID: '2544683a-8e79-4b32-a4d4-bf851996bac3',
     scheduleColumnGUID: 'e062b81f-1fff-40fc-b4a4-1cf9ecc2f32b',
-    testPatientGUID: '64DA8F5C-7E54-4659-8AE1-7BB6A033D2A5',
+    testPatientGUID: '865c8fa6-caf8-4e30-b152-82da6e93f33b',  // Chris Aleman - verified in sandbox
     uui: '765381306-000000000001030525-SR-000-000000000000DAL130-026DE427|333725|421458314VO|2d411063-3769-4618-86d1-925d3578c112|FSV'
   }
 };
@@ -456,7 +456,7 @@ const CLOUD9_ENDPOINTS: Cloud9EndpointConfig[] = [
     procedure: 'GetPortalPatientLookup',
     category: 'patient',
     description: 'Search patients by name',
-    sampleParams: { filter: 'CLITest', lookupByPatient: '1' },
+    sampleParams: { filter: 'Aleman, Chris', lookupByPatient: '1', pageIndex: '1', pageSize: '25' },
     formatResult: (data) => <Cloud9RecordsFormatter data={data} />
   },
   {
@@ -552,7 +552,7 @@ const CLOUD9_ENDPOINTS: Cloud9EndpointConfig[] = [
     procedure: 'SetAppointmentStatusConfirmed',
     category: 'write',
     description: 'Confirm an appointment',
-    sampleParams: { apptGUIDs: 'ENTER_APPT_GUID' },
+    sampleParams: { apptGUIDs: '0a22fcc4-6ba0-4009-a9e7-2b5664170669' },  // Chris Aleman's appointment
     formatResult: (data) => <GenericSuccessFormatter data={data} />
   },
   {
@@ -561,7 +561,7 @@ const CLOUD9_ENDPOINTS: Cloud9EndpointConfig[] = [
     procedure: 'SetAppointmentStatusCanceled',
     category: 'write',
     description: 'Cancel an appointment',
-    sampleParams: { apptGUIDs: 'ENTER_APPT_GUID' },
+    sampleParams: { apptGUIDs: '1efdfbbc-420a-4197-95da-76d15173a6ab' },  // Chris Aleman's 2nd appointment
     formatResult: (data) => <GenericSuccessFormatter data={data} />
   },
   {
@@ -587,7 +587,7 @@ const ENDPOINTS: EndpointConfig[] = [
     endpoint: '/ortho/getPatientByFilter',
     category: 'patient',
     description: 'Search patients by name (uses GetPortalPatientLookup)',
-    sampleData: { filter: 'PhoneTest', locationGUID: API_CONFIG.defaults.locationGUID },
+    sampleData: { filter: 'Aleman, Chris', locationGUID: API_CONFIG.defaults.locationGUID },
     formatResult: (data) => <PatientListFormatter data={data} />
   },
   {
@@ -595,7 +595,7 @@ const ENDPOINTS: EndpointConfig[] = [
     name: 'Get Patient Details',
     endpoint: '/ortho/getPatient',
     category: 'patient',
-    description: 'Get patient information by GUID (PhoneTest User)',
+    description: 'Get patient information by GUID (Chris Aleman)',
     sampleData: { patientGUID: API_CONFIG.defaults.testPatientGUID },
     formatResult: (data) => <PatientDetailFormatter data={data} />
   },
@@ -654,7 +654,7 @@ const ENDPOINTS: EndpointConfig[] = [
     endpoint: '/ortho/confirmAppt',
     category: 'patient',
     description: 'Confirm an appointment',
-    sampleData: { appointmentId: 'ENTER_APPT_GUID' },
+    sampleData: { appointmentId: '0a22fcc4-6ba0-4009-a9e7-2b5664170669' },  // Chris Aleman's appointment
     formatResult: (data) => <GenericSuccessFormatter data={data} />
   },
   // Scheduling Operations
@@ -709,7 +709,7 @@ const ENDPOINTS: EndpointConfig[] = [
     endpoint: '/ortho/cancelAppt',
     category: 'scheduling',
     description: 'Cancel an existing appointment',
-    sampleData: { appointmentGUID: 'ENTER_APPT_GUID' },
+    sampleData: { appointmentGUID: '1efdfbbc-420a-4197-95da-76d15173a6ab' },  // Chris Aleman's 2nd appointment
     formatResult: (data) => <GenericSuccessFormatter data={data} />
   }
 ];

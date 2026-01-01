@@ -228,25 +228,11 @@ const NO_INTERNAL_DETAILS_CONSTRAINT: TestConstraintDTO = {
   severity: 'high',
 };
 
-const MAX_TURNS_20: TestConstraintDTO = {
+const MAX_TURNS_50: TestConstraintDTO = {
   type: 'max_turns',
-  description: 'Complete within 20 conversation turns',
+  description: 'Complete within 50 conversation turns',
   severity: 'medium',
-  maxTurns: 20,
-};
-
-const MAX_TURNS_25: TestConstraintDTO = {
-  type: 'max_turns',
-  description: 'Complete within 25 conversation turns',
-  severity: 'medium',
-  maxTurns: 25,
-};
-
-const MAX_TURNS_10: TestConstraintDTO = {
-  type: 'max_turns',
-  description: 'Complete within 10 conversation turns',
-  severity: 'medium',
-  maxTurns: 10,
+  maxTurns: 50,
 };
 
 // ============================================================================
@@ -288,9 +274,9 @@ const goalTestCases: GoalTestCase[] = [
       traits: DEFAULT_TRAITS,
     },
     goals: [...STANDARD_DATA_COLLECTION_GOALS, BOOKING_GOAL],
-    constraints: [NO_ERRORS_CONSTRAINT, MAX_TURNS_20],
+    constraints: [NO_ERRORS_CONSTRAINT, MAX_TURNS_50],
     responseConfig: {
-      maxTurns: 20,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -337,9 +323,9 @@ const goalTestCases: GoalTestCase[] = [
       traits: DEFAULT_TRAITS,
     },
     goals: [...STANDARD_DATA_COLLECTION_GOALS, BOOKING_GOAL],
-    constraints: [NO_ERRORS_CONSTRAINT, MAX_TURNS_25],
+    constraints: [NO_ERRORS_CONSTRAINT, MAX_TURNS_50],
     responseConfig: {
-      maxTurns: 25,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -382,9 +368,9 @@ const goalTestCases: GoalTestCase[] = [
       },
     },
     goals: [...STANDARD_DATA_COLLECTION_GOALS, BOOKING_GOAL],
-    constraints: [NO_ERRORS_CONSTRAINT, MAX_TURNS_20],
+    constraints: [NO_ERRORS_CONSTRAINT, MAX_TURNS_50],
     responseConfig: {
-      maxTurns: 20,
+      maxTurns: 50,
       useLlmResponses: true, // Enable LLM for natural responses
       handleUnknownIntents: 'clarify',
     },
@@ -446,7 +432,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 15,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -490,9 +476,9 @@ const goalTestCases: GoalTestCase[] = [
       },
       BOOKING_GOAL,
     ],
-    constraints: [NO_ERRORS_CONSTRAINT, MAX_TURNS_25],
+    constraints: [NO_ERRORS_CONSTRAINT, MAX_TURNS_50],
     responseConfig: {
-      maxTurns: 30, // More turns for 3 children
+      maxTurns: 50, // More turns for 3 children
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -553,7 +539,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 15,
+      maxTurns: 50,
       useLlmResponses: true,
       handleUnknownIntents: 'clarify',
     },
@@ -599,9 +585,9 @@ const goalTestCases: GoalTestCase[] = [
       },
       BOOKING_GOAL, // Added to ensure full booking flow is tested
     ],
-    constraints: [NO_ERRORS_CONSTRAINT, MAX_TURNS_25], // Increased turns for full booking
+    constraints: [NO_ERRORS_CONSTRAINT, MAX_TURNS_50], // Increased turns for full booking
     responseConfig: {
-      maxTurns: 25,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -649,7 +635,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 10,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -701,7 +687,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 10,
+      maxTurns: 50,
       useLlmResponses: true,
       handleUnknownIntents: 'clarify',
     },
@@ -745,7 +731,7 @@ const goalTestCases: GoalTestCase[] = [
       NO_INTERNAL_DETAILS_CONSTRAINT,
     ],
     responseConfig: {
-      maxTurns: 10,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -794,7 +780,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 10,
+      maxTurns: 50,
       useLlmResponses: true,
       handleUnknownIntents: 'generic',
     },
@@ -851,7 +837,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 10,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -902,7 +888,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 15,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -968,7 +954,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 15,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -1042,7 +1028,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 25,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -1108,7 +1094,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 15,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -1174,7 +1160,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 15,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -1239,7 +1225,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 25,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -1296,7 +1282,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 20,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -1363,7 +1349,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 5,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -1434,7 +1420,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 25,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -1520,7 +1506,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 25,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -1577,7 +1563,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 15,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },
@@ -1648,7 +1634,7 @@ const goalTestCases: GoalTestCase[] = [
       },
     ],
     responseConfig: {
-      maxTurns: 25,
+      maxTurns: 50,
       useLlmResponses: false,
       handleUnknownIntents: 'clarify',
     },

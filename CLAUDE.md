@@ -16,6 +16,82 @@ This repository contains API integration specifications for Cloud 9 Ortho (Dentr
 - **Request Format**: XML payloads with a `<Procedure>` element defining the operation
 - **HTTP Method**: Most operations use GET requests with XML in the request body
 
+## V1 Production Files
+
+The canonical V1 production files are located in `/docs/v1/`. These files define the Flowise + Node Red integration architecture:
+
+**Data Flow:**
+```
+User input → Flowise Prompt → Flowise Tool → Node Red API → Cloud9 API
+```
+
+**V1 Files:**
+
+| File | Type | Description |
+|------|------|-------------|
+| `Chord_Cloud9_SystemPrompt.md` | Prompt | IVA system prompt for Allie |
+| `nodered_Cloud9_flows.json` | Flow | Node Red flow definitions |
+| `chord_dso_patient_Tool.json` | Tool | Patient operations tool |
+| `schedule_appointment_dso_Tool.json` | Tool | Scheduling operations tool |
+
+**V1 File Management Endpoints:**
+- `GET /api/test-monitor/v1-files/status` - Health check
+- `GET /api/test-monitor/v1-files` - List files
+- `GET /api/test-monitor/v1-files/:fileKey` - Get file content
+- `POST /api/test-monitor/v1-files/:fileKey/validate` - Validate content
+- `POST /api/test-monitor/v1-files/sync` - Sync to nodered directory
+
+**File Locations:**
+- `/docs/v1/` - Canonical source for V1 files
+- `/docs/archive/` - Archived old files
+- `/nodered/` - Working copies (synced from V1)
+
+**IMPORTANT - Prompt Sync Requirements:**
+
+When updating V1 prompts (especially `Chord_Cloud9_SystemPrompt.md`), you MUST sync to BOTH locations:
+
+1. **Local SQLite Database** (for App UI):
+   - Database: `test-agent/data/test-results.db`
+   - Tables: `prompt_working_copies`, `prompt_version_history`
+   - Script: `backend/scripts/save-v31-prompt.js` (or similar)
+   - Content must have double curly brackets `{{` escaped for Flowise Mustache templates
+
+2. **Langfuse Cloud** (for prompt management):
+   - Host: `https://us.cloud.langfuse.com`
+   - Prompt name: "System Prompt"
+   - Use MCP tools or direct API to create new version
+   - Same double curly bracket escaping required
+
+The hook `.claude/hooks/sync-v1-to-langfuse.js` attempts to sync both automatically on Write/Edit to `/docs/v1/` files, but manual sync may be needed if the hook doesn't trigger.
+
+## Tool Version Updates (IMPORTANT)
+
+**When updating Flowise tools (`scheduling_tool`, `patient_tool`):**
+
+1. **ONLY the JavaScript `func` field matters** - Flowise uses just the JavaScript code, not the full JSON
+2. **Always use the update script:**
+   ```bash
+   cd test-agent && node scripts/update-prompt-version.js scheduling_tool "<description>"
+   ```
+3. **The script automatically:**
+   - Extracts only the `func` field from the tool JSON
+   - Saves it to a separate `.js` file (e.g., `docs/v1/scheduling_tool_func.js`)
+   - **Creates an ESCAPED version** with `{{` `}}` for Flowise Mustache templates
+   - Updates the database with just the JavaScript content
+
+**CRITICAL - Flowise requires escaped curly brackets!**
+
+Flowise uses Mustache templates, so all `{` must be `{{` and all `}` must be `}}`.
+
+**Output files:**
+- `docs/v1/scheduling_tool_func.js` - Raw JavaScript (for reference only)
+- `docs/v1/scheduling_tool_func_escaped.js` - **USE THIS FOR FLOWISE** (auto-escaped)
+- `docs/v1/patient_tool_func.js` - Raw JavaScript (for reference only)
+- `docs/v1/patient_tool_func_escaped.js` - **USE THIS FOR FLOWISE** (auto-escaped)
+- `docs/v1/system_prompt_escaped.md` - **USE THIS FOR FLOWISE** (auto-escaped)
+
+**NEVER save the entire tool JSON to the database** - only the JavaScript func portion is needed for versioning and deployment.
+
 ## Caching Configuration
 
 **Real-Time Data Fetching**: Caching is disabled by default to ensure all data is fetched in real-time from the Cloud 9 API.

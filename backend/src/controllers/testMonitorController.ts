@@ -10,6 +10,7 @@ import { spawn } from 'child_process';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import * as promptService from '../services/promptService';
+import * as v1FileService from '../services/v1FileService';
 import * as testCaseService from '../services/testCaseService';
 import * as goalTestService from '../services/goalTestService';
 import { goalSuggestionService } from '../services/goalSuggestionService';
@@ -29,6 +30,7 @@ const FILE_KEY_DISPLAY_NAMES: Record<string, string> = {
   'system_prompt': 'System Prompt',
   'scheduling_tool': 'Scheduling Tool',
   'patient_tool': 'Patient Tool',
+  'nodered_flow': 'Node Red Flows',
 };
 
 // ============================================================================
@@ -5138,4 +5140,117 @@ export function getReferenceDocumentsWithText(fileKey: string): Array<{
   db.close();
 
   return documents;
+}
+
+// ============================================================================
+// V1 FILE MANAGEMENT ENDPOINTS
+// ============================================================================
+
+/**
+ * GET /api/test-monitor/v1-files/status
+ * Get status of all V1 files (health check)
+ */
+export async function getV1FilesStatus(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const status = v1FileService.getAllV1FilesStatus();
+    res.json({
+      success: true,
+      data: status,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * GET /api/test-monitor/v1-files
+ * List all V1 files with metadata
+ */
+export async function getV1Files(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const files = v1FileService.listV1Files();
+    res.json({
+      success: true,
+      data: files,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * GET /api/test-monitor/v1-files/:fileKey
+ * Get a specific V1 file content
+ */
+export async function getV1File(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { fileKey } = req.params;
+    const file = v1FileService.readV1File(fileKey);
+
+    if (!file) {
+      res.status(404).json({
+        success: false,
+        error: `V1 file not found: ${fileKey}`,
+      });
+      return;
+    }
+
+    const status = v1FileService.getV1FileStatus(fileKey);
+
+    res.json({
+      success: true,
+      data: {
+        ...file.meta,
+        content: file.content,
+        status,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/test-monitor/v1-files/:fileKey/validate
+ * Validate V1 file content without saving
+ */
+export async function validateV1File(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { fileKey } = req.params;
+    const { content } = req.body;
+
+    if (!content) {
+      res.status(400).json({
+        success: false,
+        error: 'Content is required',
+      });
+      return;
+    }
+
+    const validation = v1FileService.validateV1FileContent(fileKey, content);
+
+    res.json({
+      success: true,
+      data: validation,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/test-monitor/v1-files/sync
+ * Sync all V1 files to nodered directory
+ */
+export async function syncV1FilesToNodered(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = v1FileService.syncAllToNodered();
+
+    res.json({
+      success: result.success,
+      data: result.results,
+    });
+  } catch (error) {
+    next(error);
+  }
 }
