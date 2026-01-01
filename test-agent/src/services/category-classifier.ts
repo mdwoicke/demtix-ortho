@@ -149,6 +149,11 @@ const PATTERN_RULES: PatternRule[] = [
       /\bdoes that (sound|look) (correct|right|good)\b/i,
       /\bcan you confirm\b/i,
       /\bjust to confirm\b/i,
+      // Phone number confirmation patterns
+      /\bis\s+[\d\-().\s]+\s+the best number\b/i,
+      /\bthe best number to reach you\b/i,
+      /\bis that the (right|correct|best) (number|phone)\b/i,
+      /\bis this the (right|correct|best) (number|phone)\b/i,
     ],
     confidence: 0.90,
     priority: 80,
