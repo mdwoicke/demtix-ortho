@@ -206,13 +206,30 @@ const PATTERN_RULES: PatternRule[] = [
     },
   },
   {
+    // "Would you like me to check/look/search for..." patterns
+    // These are offers to perform an action - expect "yes" response
+    category: 'confirm_or_deny',
+    patterns: [
+      /\bwould you like me to (check|look|search|find)\b/i,
+      /\bshould I (check|look|search|find) for\b/i,
+      /\bwant me to (check|look|search|find)\b/i,
+      /\bshall I (check|look|search|find)\b/i,
+      /\bwould you like me to see (if|what|when)\b/i,
+    ],
+    confidence: 0.90,
+    priority: 75,
+    extractors: {
+      confirmationSubject: () => 'general',
+    },
+  },
+  {
     category: 'acknowledge',
     patterns: [
       /\bplease (remember to )?bring (your )?insurance card\b/i,
       /\bdon't forget (to bring |your )?insurance\b/i,
     ],
     confidence: 0.88,
-    priority: 75,
+    priority: 74,
     extractors: {
       confirmationSubject: () => 'insurance_card_reminder',
     },
