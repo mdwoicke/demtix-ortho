@@ -62,15 +62,28 @@ function loadGoalTestsFromDatabase(): GoalOrientedTestCase[] {
 }
 
 /**
- * Run goal-oriented tests
+ * Work item for parallel execution
+ */
+interface WorkItem {
+  scenario: GoalOrientedTestCase;
+  testIdWithRun: string;
+  runNumber: number;
+  retryAttempt: number;
+  maxRetries: number;
+}
+
+/**
+ * Run goal-oriented tests with parallel worker execution
  */
 async function runGoalTests(
   scenarioIds: string[],
   concurrency: number,
-  db: Database
+  db: Database,
+  maxRetries: number = 0
 ): Promise<TestSuiteResult> {
   console.log('\n=== Goal-Oriented Test Runner ===\n');
-  console.log(`Running ${scenarioIds.length} goal test(s) with concurrency ${concurrency}\n`);
+  const retryInfo = maxRetries > 0 ? ` (with ${maxRetries} retr${maxRetries > 1 ? 'ies' : 'y'})` : '';
+  console.log(`Running ${scenarioIds.length} goal test(s) with concurrency ${concurrency}${retryInfo}\n`);
 
   // Get all available goal scenarios (TypeScript + database)
   const dbScenarios = loadGoalTestsFromDatabase();
@@ -116,17 +129,62 @@ async function runGoalTests(
   // Track run counts per scenario for proper indexing when same test runs multiple times
   const runCountPerScenario = new Map<string, number>();
 
-  try {
-    // Run tests (sequential for now, can add parallel later)
-    for (const scenario of scenariosToRun) {
-      // Increment run count for this scenario
-      const currentCount = (runCountPerScenario.get(scenario.id) || 0) + 1;
-      runCountPerScenario.set(scenario.id, currentCount);
+  // Build work queue with proper test IDs
+  const workQueue: WorkItem[] = [];
+  for (const scenario of scenariosToRun) {
+    const currentCount = (runCountPerScenario.get(scenario.id) || 0) + 1;
+    runCountPerScenario.set(scenario.id, currentCount);
+    const testIdWithRun = currentCount > 1 ? `${scenario.id}#${currentCount}` : scenario.id;
+    workQueue.push({ scenario, testIdWithRun, runNumber: currentCount, retryAttempt: 0, maxRetries });
+  }
 
-      // Generate unique test ID with run index (e.g., GOAL-HAPPY-001#2 for second run)
-      const testIdWithRun = currentCount > 1 ? `${scenario.id}#${currentCount}` : scenario.id;
+  // Shared queue index for work distribution
+  // Note: JavaScript is single-threaded, so no mutex needed - the event loop
+  // ensures only one worker accesses queueIndex at a time between awaits
+  let queueIndex = 0;
 
-      console.log(`[GoalTest] Starting: ${testIdWithRun} - ${scenario.name}`);
+  // Track final results per test (only the last attempt counts)
+  const finalResults = new Map<string, TestResult>();
+
+  /**
+   * Get next work item from queue
+   */
+  function getNextWorkItem(): WorkItem | null {
+    if (queueIndex >= workQueue.length) return null;
+    const item = workQueue[queueIndex];
+    queueIndex++;
+    return item;
+  }
+
+  /**
+   * Re-queue a failed test for retry
+   */
+  function requeueForRetry(item: WorkItem): void {
+    workQueue.push({
+      ...item,
+      retryAttempt: item.retryAttempt + 1,
+    });
+  }
+
+  /**
+   * Worker function that processes tests from the shared queue
+   */
+  async function runWorker(workerId: number): Promise<TestResult[]> {
+    const workerResults: TestResult[] = [];
+
+    console.log(`[Worker ${workerId}] Started`);
+
+    while (true) {
+      const workItem = getNextWorkItem();
+      if (!workItem) {
+        console.log(`[Worker ${workerId}] Finished - no more tests`);
+        break;
+      }
+
+      const { scenario, testIdWithRun, runNumber, retryAttempt, maxRetries } = workItem;
+      const retryLabel = retryAttempt > 0 ? ` [retry ${retryAttempt}/${maxRetries}]` : '';
+
+      console.log(`[Worker ${workerId}] Starting: ${testIdWithRun}${retryLabel} - ${scenario.name}`);
 
       // Create per-test runner with fresh session
       const flowiseClient = new FlowiseClient();
@@ -140,7 +198,7 @@ async function runGoalTests(
         const testResult: TestResult = {
           runId,
           testId: testIdWithRun,
-          testName: currentCount > 1 ? `${scenario.name} (Run ${currentCount})` : scenario.name,
+          testName: runNumber > 1 ? `${scenario.name} (Run ${runNumber})` : scenario.name,
           category: scenario.category,
           status: result.passed ? 'passed' : 'failed',
           startedAt: new Date(Date.now() - result.durationMs).toISOString(),
@@ -157,27 +215,71 @@ async function runGoalTests(
           })),
         };
 
-        results.push(testResult);
-        const status = result.passed ? '✓ PASSED' : '✗ FAILED';
-        console.log(`[GoalTest] ${status}: ${testIdWithRun} (${result.durationMs}ms, ${result.turnCount} turns)`);
+        // Handle retry logic
+        if (!result.passed && retryAttempt < maxRetries) {
+          // Test failed but we have retries left - re-queue it
+          requeueForRetry(workItem);
+          console.log(`[Worker ${workerId}] ✗ Failed: ${testIdWithRun}${retryLabel} - retrying (${result.durationMs}ms, ${result.turnCount} turns)`);
+        } else {
+          // Either passed or exhausted retries - this is the final result
+          workerResults.push(testResult);
+          finalResults.set(testIdWithRun, testResult);
+
+          const status = result.passed ? '✓ Completed' : '✗ Completed';
+          const retriedNote = retryAttempt > 0 ? (result.passed ? ' (passed on retry)' : ' (failed after retries)') : '';
+          console.log(`[Worker ${workerId}] ${status}: ${testIdWithRun}${retriedNote} (${result.durationMs}ms, ${result.turnCount} turns)`);
+        }
       } catch (error: any) {
-        const errorResult: TestResult = {
-          runId,
-          testId: testIdWithRun,
-          testName: currentCount > 1 ? `${scenario.name} (Run ${currentCount})` : scenario.name,
-          category: scenario.category,
-          status: 'error',
-          startedAt: new Date().toISOString(),
-          completedAt: new Date().toISOString(),
-          durationMs: 0,
-          errorMessage: error.message,
-          transcript: [],
-          findings: [],
-        };
-        results.push(errorResult);
-        db.saveTestResult(errorResult);
-        console.log(`[GoalTest] ✗ ERROR: ${testIdWithRun} - ${error.message}`);
+        // Handle errors with retry logic
+        if (retryAttempt < maxRetries) {
+          requeueForRetry(workItem);
+          console.log(`[Worker ${workerId}] ✗ Error: ${testIdWithRun}${retryLabel} - retrying: ${error.message}`);
+        } else {
+          const errorResult: TestResult = {
+            runId,
+            testId: testIdWithRun,
+            testName: runNumber > 1 ? `${scenario.name} (Run ${runNumber})` : scenario.name,
+            category: scenario.category,
+            status: 'error',
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            durationMs: 0,
+            errorMessage: error.message,
+            transcript: [],
+            findings: [],
+          };
+          workerResults.push(errorResult);
+          finalResults.set(testIdWithRun, errorResult);
+          db.saveTestResult(errorResult);
+          const retriedNote = retryAttempt > 0 ? ' (failed after retries)' : '';
+          console.log(`[Worker ${workerId}] ✗ Error: ${testIdWithRun}${retriedNote} - ${error.message}`);
+        }
       }
+    }
+
+    return workerResults;
+  }
+
+  try {
+    // Determine actual concurrency (don't create more workers than tests)
+    const actualConcurrency = Math.min(concurrency, workQueue.length);
+
+    if (actualConcurrency > 1) {
+      console.log(`[GoalTest] Starting ${actualConcurrency} parallel workers...\n`);
+    }
+
+    // Create and start all workers in parallel
+    const workerPromises: Promise<TestResult[]>[] = [];
+    for (let i = 0; i < actualConcurrency; i++) {
+      workerPromises.push(runWorker(i));
+    }
+
+    // Wait for all workers to complete
+    const workerResults = await Promise.all(workerPromises);
+
+    // Flatten results from all workers
+    for (const workerResult of workerResults) {
+      results.push(...workerResult);
     }
 
     const duration = Date.now() - startTime;
@@ -264,6 +366,7 @@ program
   .option('-f, --failed', 'Re-run only previously failed tests')
   .option('-w, --watch', 'Watch mode - show real-time output')
   .option('-n, --concurrency <number>', 'Number of parallel workers (1-10, default: 1)', '1')
+  .option('-r, --retries <number>', 'Number of retries for flaky tests (0-3, default: 0)', '0')
   .action(async (options) => {
     try {
       // Cleanup stale runs at startup
@@ -304,6 +407,9 @@ program
       // Parse concurrency option
       const concurrency = parseInt(options.concurrency, 10) || 1;
 
+      // Parse retries option (0-3)
+      const maxRetries = Math.min(3, Math.max(0, parseInt(options.retries, 10) || 0));
+
       // Check if any scenario IDs are goal-oriented tests (start with "GOAL-")
       const hasGoalTests = scenarioIds?.some(id => id.startsWith('GOAL-')) || false;
       const goalScenarioIds = scenarioIds?.filter(id => id.startsWith('GOAL-')) || [];
@@ -316,7 +422,7 @@ program
         console.log('\nDetected goal-oriented test IDs, using GoalTestRunner...\n');
         const db = new Database();
         db.initialize();
-        result = await runGoalTests(goalScenarioIds, concurrency, db);
+        result = await runGoalTests(goalScenarioIds, concurrency, db, maxRetries);
 
         // If there are also regular tests, run those too
         if (regularScenarioIds && regularScenarioIds.length > 0) {
