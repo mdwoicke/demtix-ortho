@@ -3,11 +3,12 @@
  * Main execution control page with test configuration and real-time status
  */
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../hooks';
 import { PageHeader } from '../../components/layout';
 import { Button, Card } from '../../components/ui';
+import { ExecutionMetricsPanel } from '../../components/features/test-monitor';
 import {
   fetchScenarios,
   checkActiveExecution,
@@ -65,6 +66,9 @@ export function TestMonitorDashboard() {
   // Reference to the SSE EventSource
   const eventSourceRef = useRef<EventSource | null>(null);
 
+  // Track execution start time for metrics
+  const [executionStartedAt, setExecutionStartedAt] = useState<string | null>(null);
+
   // Handle SSE events
   const handleExecutionEvent = useCallback((event: ExecutionStreamEvent) => {
     console.log('[SSE Event]', event.type, event.data);
@@ -79,10 +83,14 @@ export function TestMonitorDashboard() {
       case 'worker-status':
         dispatch(updateWorkerStatus(event.data));
         break;
+      case 'execution-started':
+        setExecutionStartedAt(new Date().toISOString());
+        break;
       case 'execution-completed':
       case 'execution-stopped':
       case 'complete':
         dispatch(resetExecution());
+        setExecutionStartedAt(null);
         // Refresh test runs to show the completed run
         dispatch(fetchTestRuns({}));
         break;
@@ -127,6 +135,9 @@ export function TestMonitorDashboard() {
   // Handle starting test execution
   const handleStartExecution = async () => {
     try {
+      // Set start time for metrics tracking
+      setExecutionStartedAt(new Date().toISOString());
+
       const result = await dispatch(startExecution({
         categories: selectedCategories,
         scenarios: [],
@@ -139,6 +150,7 @@ export function TestMonitorDashboard() {
       }
     } catch (err) {
       console.error('Failed to start execution:', err);
+      setExecutionStartedAt(null); // Clear on error
     }
   };
 
@@ -147,6 +159,7 @@ export function TestMonitorDashboard() {
     if (currentRunId) {
       try {
         await dispatch(stopExecution(currentRunId)).unwrap();
+        setExecutionStartedAt(null);
       } catch (err) {
         console.error('Failed to stop execution:', err);
       }
@@ -432,6 +445,14 @@ export function TestMonitorDashboard() {
               )}
             </div>
           </Card>
+
+          {/* Enhanced Execution Metrics - shows ETA, throughput, failure rate */}
+          <ExecutionMetricsPanel
+            progress={progress}
+            workers={workers}
+            startedAt={executionStartedAt ?? undefined}
+            isExecuting={isExecuting}
+          />
 
           {/* Recent Runs */}
           <Card className="flex-1 min-h-0">

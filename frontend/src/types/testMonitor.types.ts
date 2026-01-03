@@ -204,6 +204,52 @@ export interface ExecutionProgress {
   skipped: number;
 }
 
+// Enhanced execution metrics for parallel execution optimization
+export interface EnhancedExecutionMetrics {
+  // Time metrics
+  startedAt: string;
+  elapsedMs: number;
+  estimatedRemainingMs: number | null;
+  estimatedCompletionAt: string | null;
+
+  // Throughput
+  testsPerMinute: number;
+  avgTestDurationMs: number;
+
+  // Failure analysis
+  failureRate: number;
+  recentFailures: RecentFailure[];
+  failureClusters: FailureClusterSummary[];
+
+  // Worker efficiency
+  workerUtilization: number;  // 0-1
+  idleWorkerCount: number;
+
+  // Retries
+  totalRetries: number;
+  retriedTests: string[];
+
+  // Early terminations
+  earlyTerminations: number;
+}
+
+export interface RecentFailure {
+  testId: string;
+  testName: string;
+  failedAt: string;
+  errorType: string;
+  errorMessage: string;
+  workerId: number;
+}
+
+export interface FailureClusterSummary {
+  clusterId: string;
+  name: string;
+  count: number;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  trend: 'new' | 'recurring' | 'improving' | 'worsening' | 'stable';
+}
+
 export interface StartExecutionRequest {
   categories: string[];
   scenarios: string[];

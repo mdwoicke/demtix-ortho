@@ -301,6 +301,23 @@ export class Database {
     }
 
     this.db = new BetterSqlite3(this.dbPath);
+
+    // Enable WAL mode for better concurrent write performance
+    // WAL allows multiple readers with one writer, reducing lock contention
+    this.db.pragma('journal_mode = WAL');
+
+    // NORMAL synchronous mode: slightly faster, still safe with WAL
+    this.db.pragma('synchronous = NORMAL');
+
+    // Increase cache size to 64MB for better performance
+    this.db.pragma('cache_size = -64000');
+
+    // Wait up to 5 seconds when database is locked (parallel writes)
+    this.db.pragma('busy_timeout = 5000');
+
+    // Enable memory-mapped I/O for faster reads (256MB)
+    this.db.pragma('mmap_size = 268435456');
+
     this.createTables();
   }
 
@@ -801,6 +818,152 @@ export class Database {
 
       CREATE INDEX IF NOT EXISTS idx_ref_docs_file_key ON reference_documents(file_key);
       CREATE INDEX IF NOT EXISTS idx_ref_docs_active ON reference_documents(is_active);
+
+      -- ============================================================================
+      -- PARALLEL EXECUTION OPTIMIZATION TABLES
+      -- ============================================================================
+
+      -- Failure fingerprints for deduplication and clustering
+      CREATE TABLE IF NOT EXISTS failure_fingerprints (
+        fingerprint_id TEXT PRIMARY KEY,
+        hash TEXT NOT NULL,
+        components_json TEXT NOT NULL,
+        first_seen TEXT DEFAULT CURRENT_TIMESTAMP,
+        last_seen TEXT DEFAULT CURRENT_TIMESTAMP,
+        occurrence_count INTEGER DEFAULT 1,
+        cluster_id TEXT,
+        FOREIGN KEY (cluster_id) REFERENCES failure_clusters(cluster_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_fingerprints_hash ON failure_fingerprints(hash);
+      CREATE INDEX IF NOT EXISTS idx_fingerprints_cluster ON failure_fingerprints(cluster_id);
+      CREATE INDEX IF NOT EXISTS idx_fingerprints_last_seen ON failure_fingerprints(last_seen);
+
+      -- Failure clusters for grouping similar failures
+      CREATE TABLE IF NOT EXISTS failure_clusters (
+        cluster_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        root_cause_json TEXT,
+        severity TEXT CHECK(severity IN ('critical', 'high', 'medium', 'low')) DEFAULT 'medium',
+        trend TEXT CHECK(trend IN ('new', 'recurring', 'improving', 'worsening', 'stable')) DEFAULT 'new',
+        affected_test_count INTEGER DEFAULT 0,
+        first_seen TEXT DEFAULT CURRENT_TIMESTAMP,
+        last_seen TEXT DEFAULT CURRENT_TIMESTAMP,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_clusters_severity ON failure_clusters(severity);
+      CREATE INDEX IF NOT EXISTS idx_clusters_trend ON failure_clusters(trend);
+
+      -- Fingerprint to test mapping (many-to-many)
+      CREATE TABLE IF NOT EXISTS fingerprint_tests (
+        fingerprint_id TEXT NOT NULL,
+        test_id TEXT NOT NULL,
+        run_id TEXT,
+        seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (fingerprint_id, test_id, run_id),
+        FOREIGN KEY (fingerprint_id) REFERENCES failure_fingerprints(fingerprint_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_fp_tests_test ON fingerprint_tests(test_id);
+      CREATE INDEX IF NOT EXISTS idx_fp_tests_run ON fingerprint_tests(run_id);
+
+      -- Fix rollback points for safe fix application
+      CREATE TABLE IF NOT EXISTS fix_rollback_points (
+        rollback_id TEXT PRIMARY KEY,
+        fix_id TEXT NOT NULL,
+        target_file TEXT NOT NULL,
+        original_content TEXT NOT NULL,
+        pass_rate_before REAL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        applied_at TEXT,
+        rolled_back_at TEXT,
+        status TEXT CHECK(status IN ('created', 'applied', 'rolled_back', 'expired')) DEFAULT 'created',
+        FOREIGN KEY (fix_id) REFERENCES generated_fixes(fix_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_rollback_fix ON fix_rollback_points(fix_id);
+      CREATE INDEX IF NOT EXISTS idx_rollback_status ON fix_rollback_points(status);
+
+      -- Fix approvals for human-in-the-loop workflow
+      CREATE TABLE IF NOT EXISTS fix_approvals (
+        approval_id TEXT PRIMARY KEY,
+        fix_id TEXT NOT NULL,
+        status TEXT CHECK(status IN ('pending', 'approved', 'rejected', 'auto_approved', 'expired')) DEFAULT 'pending',
+        risk_level TEXT CHECK(risk_level IN ('critical', 'high', 'medium', 'low')) DEFAULT 'medium',
+        approver TEXT,
+        approval_reason TEXT,
+        rejection_reason TEXT,
+        requested_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TEXT,
+        expires_at TEXT,
+        auto_approve_threshold REAL,
+        FOREIGN KEY (fix_id) REFERENCES generated_fixes(fix_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_approvals_status ON fix_approvals(status);
+      CREATE INDEX IF NOT EXISTS idx_approvals_fix ON fix_approvals(fix_id);
+
+      -- Fix effectiveness tracking for learning
+      CREATE TABLE IF NOT EXISTS fix_effectiveness (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fix_id TEXT NOT NULL,
+        initial_confidence REAL,
+        actual_effectiveness REAL,
+        pass_rate_before REAL,
+        pass_rate_after REAL,
+        tests_affected INTEGER,
+        tests_improved INTEGER,
+        tests_regressed INTEGER,
+        evaluated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        evaluation_run_id TEXT,
+        FOREIGN KEY (fix_id) REFERENCES generated_fixes(fix_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_effectiveness_fix ON fix_effectiveness(fix_id);
+      CREATE INDEX IF NOT EXISTS idx_effectiveness_run ON fix_effectiveness(evaluation_run_id);
+
+      -- Test history for priority queue optimization
+      CREATE TABLE IF NOT EXISTS test_history_stats (
+        test_id TEXT PRIMARY KEY,
+        avg_duration_ms REAL,
+        last_pass_rate REAL,
+        run_count INTEGER DEFAULT 0,
+        pass_count INTEGER DEFAULT 0,
+        fail_count INTEGER DEFAULT 0,
+        flaky_score REAL DEFAULT 0,
+        last_status TEXT CHECK(last_status IN ('passed', 'failed', 'error', 'skipped')),
+        last_run_at TEXT,
+        category TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_test_history_category ON test_history_stats(category);
+      CREATE INDEX IF NOT EXISTS idx_test_history_flaky ON test_history_stats(flaky_score DESC);
+
+      -- Parallel execution metrics
+      CREATE TABLE IF NOT EXISTS parallel_execution_metrics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL,
+        worker_count INTEGER,
+        total_tests INTEGER,
+        completed_tests INTEGER,
+        passed_tests INTEGER,
+        failed_tests INTEGER,
+        avg_test_duration_ms REAL,
+        throughput_per_minute REAL,
+        total_duration_ms INTEGER,
+        batch_writes INTEGER,
+        write_queue_max_size INTEGER,
+        retries_total INTEGER,
+        early_terminations INTEGER,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_parallel_metrics_run ON parallel_execution_metrics(run_id);
     `);
 
     // Migration: Add agent_question column if it doesn't exist
