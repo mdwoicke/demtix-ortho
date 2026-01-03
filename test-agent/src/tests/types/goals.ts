@@ -38,7 +38,10 @@ export type CollectableField =
   | 'location_confirmation'
   | 'card_reminder'      // Agent reminded caller to bring insurance card
   | 'address_provided'   // Agent provided office address
-  | 'parking_info';      // Agent provided parking information
+  | 'parking_info'       // Agent provided parking information
+  | 'hours_info'         // Agent provided hours of operation
+  | 'court_docs_mentioned'    // Agent mentioned court documentation requirement
+  | 'early_arrival_mentioned'; // Agent mentioned early arrival for paperwork
 
 /**
  * Context passed to goal evaluation functions
@@ -77,6 +80,10 @@ export interface GoalResult {
     required?: CollectableField[];
     collected?: CollectableField[];
     missing?: CollectableField[];
+    // For booking goals - PAYLOAD verification details
+    appointmentGUID?: string | null;
+    verifiedByPayload?: boolean;
+    payloadTurnNumber?: number | null;
   };
 }
 

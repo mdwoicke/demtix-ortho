@@ -20,6 +20,15 @@ import type { ProgressState, ProgressIssue } from '../tests/types/progress';
 import type { ConversationTurn } from '../tests/test-case';
 
 /**
+ * Result of checking for appointmentGUID in conversation
+ */
+interface AppointmentGUIDResult {
+  found: boolean;
+  appointmentGUID: string | null;
+  turnNumber: number | null;
+}
+
+/**
  * Goal Evaluator Service
  *
  * Evaluates whether a goal-oriented test passed or failed.
@@ -174,25 +183,63 @@ export class GoalEvaluator {
 
   /**
    * Evaluate booking confirmed goal
+   *
+   * IMPORTANT: A booking is only truly confirmed when:
+   * 1. The agent says the booking is confirmed (progress.bookingConfirmed or context flags), AND
+   * 2. If a PAYLOAD with appointmentGUID is found, it must be non-null
+   *
+   * This prevents false positives where agent says "let me verify" or similar
+   * phrases that sound like confirmation but the actual API call failed.
    */
   private evaluateBookingGoal(
     goalId: string,
     context: GoalContext,
     progress: ProgressState
   ): GoalResult {
-    // Check multiple sources - bookingConfirmed is a persistent flag that survives
-    // subsequent intents like saying_goodbye after booking is complete
-    const confirmed = progress.bookingConfirmed ||  // Persistent flag set when confirming_booking detected
+    // Check multiple sources for verbal/intent confirmation
+    const agentSaidConfirmed = progress.bookingConfirmed ||  // Persistent flag set when confirming_booking detected
       context.agentConfirmedBooking ||
       progress.currentFlowState === 'confirmation' ||
       progress.completedGoals.includes(goalId);
 
+    // Check for appointmentGUID in PAYLOAD to verify actual booking success
+    const appointmentResult = this.checkForAppointmentGUID(context.conversationHistory);
+
+    // Determine actual booking success
+    let confirmed = false;
+    let message = '';
+
+    if (appointmentResult.found) {
+      // PAYLOAD was found - use appointmentGUID as source of truth
+      if (appointmentResult.appointmentGUID) {
+        // Valid appointmentGUID = booking succeeded
+        confirmed = true;
+        message = `Booking confirmed with appointmentGUID: ${appointmentResult.appointmentGUID.substring(0, 8)}...`;
+      } else {
+        // appointmentGUID is null = booking failed despite what agent said
+        confirmed = false;
+        message = agentSaidConfirmed
+          ? 'Agent claimed booking confirmed but appointmentGUID is null (booking actually failed)'
+          : 'Booking failed - appointmentGUID is null';
+      }
+    } else {
+      // No PAYLOAD found - fall back to agent's verbal confirmation
+      // This is less reliable but necessary for tests where PAYLOAD isn't exposed
+      confirmed = agentSaidConfirmed;
+      message = confirmed
+        ? 'Agent confirmed the booking (no PAYLOAD verification available)'
+        : 'Booking was not confirmed';
+    }
+
     return {
       goalId,
       passed: confirmed,
-      message: confirmed
-        ? 'Agent confirmed the booking'
-        : 'Booking was not confirmed',
+      message,
+      details: appointmentResult.found ? {
+        appointmentGUID: appointmentResult.appointmentGUID,
+        verifiedByPayload: true,
+        payloadTurnNumber: appointmentResult.turnNumber,
+      } : undefined,
     };
   }
 
@@ -272,6 +319,20 @@ export class GoalEvaluator {
       if (violation) {
         violations.push(violation);
       }
+    }
+
+    // Always check for PAYLOAD leakage (implicit constraint)
+    const payloadLeakage = this.checkForPayloadLeakage(conversationHistory);
+    if (payloadLeakage.hasLeakage) {
+      violations.push({
+        constraint: {
+          type: 'must_not_happen',
+          description: 'Agent must not expose raw PAYLOAD/JSON to user',
+          severity: 'medium',
+        },
+        message: `PAYLOAD leakage detected: ${payloadLeakage.leakedContent}`,
+        turnNumber: payloadLeakage.turnNumber ?? undefined,
+      });
     }
 
     return violations;
@@ -440,6 +501,119 @@ export class GoalEvaluator {
       turnCount: progress.turnNumber,
       elapsedTimeMs: Date.now() - progress.startedAt.getTime(),
     };
+  }
+
+  /**
+   * Check conversation history for valid appointmentGUID in PAYLOAD
+   *
+   * Looks for patterns like:
+   * - PAYLOAD: { "appointmentGUID": "..." }
+   * - "appointmentGUID": "non-null-value"
+   *
+   * A valid appointmentGUID indicates the booking was actually successful.
+   * If the agent says booking confirmed but PAYLOAD has null appointmentGUID,
+   * the booking actually failed.
+   */
+  private checkForAppointmentGUID(conversationHistory: ConversationTurn[]): AppointmentGUIDResult {
+    // Look through assistant messages for PAYLOAD containing appointmentGUID
+    for (let i = conversationHistory.length - 1; i >= 0; i--) {
+      const turn = conversationHistory[i];
+      if (turn.role !== 'assistant') continue;
+
+      const content = turn.content;
+
+      // Pattern 1: PAYLOAD: { ... "appointmentGUID": "value" ... }
+      const payloadMatch = content.match(/PAYLOAD:\s*(\{[\s\S]*?\})/i);
+      if (payloadMatch) {
+        try {
+          const payload = JSON.parse(payloadMatch[1]);
+          if ('appointmentGUID' in payload) {
+            const guid = payload.appointmentGUID;
+            // Check if it's a valid GUID (not null, not empty, not "null" string)
+            const isValid = guid && guid !== 'null' && guid !== '' && typeof guid === 'string';
+            return {
+              found: true,
+              appointmentGUID: isValid ? guid : null,
+              turnNumber: i + 1, // 1-indexed
+            };
+          }
+        } catch (e) {
+          // JSON parse failed, continue looking
+        }
+      }
+
+      // Pattern 2: Raw JSON containing appointmentGUID (agent leaked payload)
+      const jsonMatch = content.match(/"appointmentGUID"\s*:\s*"?([^",}\s]+)"?/);
+      if (jsonMatch) {
+        const guid = jsonMatch[1];
+        const isValid = guid && guid !== 'null' && guid !== '';
+        return {
+          found: true,
+          appointmentGUID: isValid ? guid : null,
+          turnNumber: i + 1,
+        };
+      }
+    }
+
+    return { found: false, appointmentGUID: null, turnNumber: null };
+  }
+
+  /**
+   * Check if agent response contains raw PAYLOAD leakage
+   *
+   * Detects when the agent accidentally exposes internal PAYLOAD JSON to the user.
+   * This is considered an error as users shouldn't see internal system data.
+   */
+  private checkForPayloadLeakage(conversationHistory: ConversationTurn[]): {
+    hasLeakage: boolean;
+    turnNumber: number | null;
+    leakedContent: string | null;
+  } {
+    for (let i = 0; i < conversationHistory.length; i++) {
+      const turn = conversationHistory[i];
+      if (turn.role !== 'assistant') continue;
+
+      const content = turn.content;
+
+      // Check for raw PAYLOAD exposure patterns
+      // Pattern 1: "PAYLOAD:" followed by JSON in the visible response
+      if (/PAYLOAD:\s*\{/i.test(content)) {
+        // Extract a snippet for the error message
+        const snippet = content.substring(
+          content.toUpperCase().indexOf('PAYLOAD:'),
+          Math.min(content.length, content.toUpperCase().indexOf('PAYLOAD:') + 100)
+        );
+        return {
+          hasLeakage: true,
+          turnNumber: i + 1,
+          leakedContent: snippet + '...',
+        };
+      }
+
+      // Pattern 2: Raw JSON with internal field names exposed
+      const internalFields = [
+        '"appointmentGUID"',
+        '"patientGUID"',
+        '"locationGUID"',
+        '"providerGUID"',
+        '"scheduleViewGUID"',
+      ];
+      for (const field of internalFields) {
+        if (content.includes(field) && content.includes('{') && content.includes('}')) {
+          // Only flag if it looks like raw JSON, not just a mention
+          const hasJsonStructure = /\{\s*"[^"]+"\s*:\s*[^}]+\}/.test(content);
+          if (hasJsonStructure) {
+            return {
+              hasLeakage: true,
+              turnNumber: i + 1,
+              leakedContent: `Contains internal field: ${field}`,
+            };
+          }
+        }
+      }
+    }
+
+    return { hasLeakage: false, turnNumber: null, leakedContent: null };
   }
 
   /**

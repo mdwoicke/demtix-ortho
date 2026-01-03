@@ -78,6 +78,8 @@ interface PatternRule {
     confirmationSubject?: (text: string) => ConfirmationSubject;
     options?: (text: string) => string[];
     terminalState?: (text: string) => TerminalState;
+    infoProvided?: (text: string) => string;
+    bookingConfirmedThisTurn?: (text: string) => boolean;
   };
 }
 
@@ -87,12 +89,37 @@ interface PatternRule {
  */
 const PATTERN_RULES: PatternRule[] = [
   // ==========================================================================
+  // FALSE POSITIVE PREVENTION (Highest Priority - checked FIRST)
+  // ==========================================================================
+  // These patterns catch agent statements that SOUND like confirmations but aren't.
+  // They must be checked BEFORE booking confirmation patterns.
+  {
+    category: 'acknowledge',
+    patterns: [
+      // Future/in-progress actions (NOT confirmations)
+      /\blet me (verify|check|confirm|schedule|book)\b/i,
+      /\bI('ll| will) (verify|check|confirm|schedule|book)\b/i,
+      /\bI('m| am) (verifying|checking|confirming|scheduling|booking)\b/i,
+      /\bone moment while I (verify|check|confirm|schedule|book)\b/i,
+      /\bprocessing your (request|booking|appointment)\b/i,
+      /\bjust a moment\b/i,
+      /\blet me (look|search|find|pull up)\b/i,
+      /\bI('m| am) (looking|searching|finding|pulling)\b/i,
+    ],
+    confidence: 0.85,
+    priority: 105, // Higher than booking confirmation to catch false positives
+    extractors: {
+      terminalState: () => 'none', // Explicitly NOT a terminal state
+      infoProvided: () => 'processing',
+    },
+  },
+  // ==========================================================================
   // TERMINAL STATE DETECTION (Highest Priority)
   // ==========================================================================
   {
     category: 'acknowledge',
     patterns: [
-      // Standard patterns
+      // Standard patterns - use PAST TENSE to indicate completed action
       /\b(your appointment|booking|appointment)\s+(has been|is)\s+(successfully\s+)?(scheduled|booked|confirmed)\b/i,
       /\bI have (booked|scheduled|confirmed)\b/i,
       /\bconfirmation number\b/i,
@@ -110,6 +137,7 @@ const PATTERN_RULES: PatternRule[] = [
     priority: 100,
     extractors: {
       terminalState: () => 'booking_confirmed',
+      bookingConfirmedThisTurn: () => true,
     },
   },
   {
@@ -254,11 +282,14 @@ const PATTERN_RULES: PatternRule[] = [
     patterns: [
       /\bplease (remember to )?bring (your )?insurance card\b/i,
       /\bdon't forget (to bring |your )?insurance\b/i,
+      /\bremember to bring\b.*\bcard\b/i,
+      /\bbring your (insurance )?card\b/i,
     ],
     confidence: 0.88,
     priority: 74,
     extractors: {
-      confirmationSubject: () => 'insurance_card_reminder',
+      terminalState: () => 'none',
+      infoProvided: () => 'card_reminder',
     },
   },
   {
@@ -544,6 +575,11 @@ const PATTERN_RULES: PatternRule[] = [
       /\banything (else )?(we should know|to note|to be aware of)\b/i,
       /\bmedical conditions\b/i,
       /\baccommodations (we should|to) (know|note)\b/i,
+      // Additional patterns for "you'd like us to know" phrasing
+      /\bspecial needs.{0,30}(know|aware|note)\b/i,
+      /\b(know|aware|note).{0,30}special needs\b/i,
+      /\baccommodations.{0,30}(you'd|you would) like\b/i,
+      /\banything.{0,20}(us|we).{0,10}(know|aware)\b/i,
     ],
     confidence: 0.92, // Higher confidence to beat previous_ortho_treatment
     priority: 49, // Higher priority than previous_ortho_treatment (48)
@@ -596,6 +632,7 @@ const PATTERN_RULES: PatternRule[] = [
     priority: 30,
     extractors: {
       terminalState: () => 'none',
+      infoProvided: () => 'address',
     },
   },
   {
@@ -609,6 +646,25 @@ const PATTERN_RULES: PatternRule[] = [
     priority: 29,
     extractors: {
       terminalState: () => 'none',
+      infoProvided: () => 'parking',
+    },
+  },
+  // Hours of operation patterns - agent providing hours info
+  {
+    category: 'acknowledge',
+    patterns: [
+      /\bwe('re| are) open\b/i,
+      /\bour hours\b/i,
+      /\bhours (are|of operation)\b/i,
+      /\bopen (from|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i,
+      /\bmonday (through|to) (friday|saturday|sunday)\b/i,
+      /\b\d+\s*(:\d+)?\s*(am|AM|pm|PM)\s+to\s+\d+\s*(:\d+)?\s*(am|AM|pm|PM)\b/i,
+    ],
+    confidence: 0.90,
+    priority: 31, // Higher priority than address/parking to catch hours first
+    extractors: {
+      terminalState: () => 'none',
+      infoProvided: () => 'hours',
     },
   },
   {
@@ -730,18 +786,39 @@ export class CategoryClassifier {
             terminalState: rule.extractors?.terminalState?.(agentResponse) || 'none',
             bookingMentioned: /\b(book|appointment|schedule)\b/i.test(agentResponse),
             transferMentioned: /\b(transfer|connect|hold)\b/i.test(agentResponse),
+            bookingConfirmedThisTurn: false,
             matchedPattern: pattern.source,
           };
 
           // Apply extractors
           if (rule.extractors?.dataFields) {
             result.dataFields = rule.extractors.dataFields(agentResponse);
+            // Debug logging for special_needs detection
+            if (result.dataFields?.includes('special_needs')) {
+              console.log(`[CategoryClassifier] ✓ special_needs detected: pattern="${pattern.source.substring(0, 50)}..."`);
+            }
           }
           if (rule.extractors?.confirmationSubject) {
             result.confirmationSubject = rule.extractors.confirmationSubject(agentResponse);
           }
           if (rule.extractors?.options) {
             result.options = rule.extractors.options(agentResponse);
+          }
+          if (rule.extractors?.infoProvided) {
+            result.infoProvided = rule.extractors.infoProvided(agentResponse);
+          }
+          if (rule.extractors?.bookingConfirmedThisTurn) {
+            result.bookingConfirmedThisTurn = rule.extractors.bookingConfirmedThisTurn(agentResponse);
+          }
+
+          // POST-PROCESSING: Check for follow-up questions after booking confirmation
+          // If booking is confirmed BUT agent asks about address/parking, prioritize the question
+          if (result.terminalState === 'booking_confirmed') {
+            const followUpResult = this.checkForFollowUpQuestion(agentResponse, result);
+            if (followUpResult) {
+              console.log('[CategoryClassifier] Detected follow-up question after booking confirmation');
+              return followUpResult;
+            }
           }
 
           return result;
@@ -757,6 +834,7 @@ export class CategoryClassifier {
       terminalState: 'none',
       bookingMentioned: /\b(book|appointment|schedule)\b/i.test(agentResponse),
       transferMentioned: /\b(transfer|connect|hold)\b/i.test(agentResponse),
+      bookingConfirmedThisTurn: false,
       reasoning: 'No pattern matched',
     };
   }
@@ -836,6 +914,28 @@ Determine what TYPE of response the caller should give. Return ONLY a JSON objec
 - clarify_request: Agent's question is unclear, caller should ask for clarification
 - express_preference: Agent asking open-ended preference (morning vs afternoon)
 
+## CRITICAL: Terminal State Rules
+terminalState="booking_confirmed" should ONLY be set when the agent EXPLICITLY confirms the booking is complete.
+
+THESE ARE NOT CONFIRMATIONS (terminalState="none"):
+- "Let me verify that information..."
+- "I'm checking availability..."
+- "Let me schedule that for you..."
+- "I'll book that appointment..."
+- "Processing your request..."
+- "One moment while I confirm..."
+- Any statement about FUTURE or IN-PROGRESS actions
+
+THESE ARE CONFIRMATIONS (terminalState="booking_confirmed"):
+- "Your appointment has been scheduled for..."
+- "I've booked you for Monday at 9am"
+- "Your appointment is confirmed"
+- "You're all set for..."
+- "I have scheduled your appointment"
+- Past tense statements about completed booking
+
+The key difference: A confirmation means the action is DONE, not that it's being attempted.
+
 ## Data Field Values
 caller_name, caller_name_spelling, caller_phone, caller_email,
 child_count, child_name, child_dob, child_age,
@@ -873,6 +973,7 @@ Return ONLY the JSON, no markdown.`;
         terminalState: 'none',
         bookingMentioned: false,
         transferMentioned: false,
+        bookingConfirmedThisTurn: false,
         reasoning: 'Failed to parse LLM response',
       };
     }
@@ -952,8 +1053,8 @@ Return ONLY the JSON, no markdown.`;
       primaryIntent = (CATEGORY_TO_LEGACY_INTENT[result.category] as AgentIntent) || 'unknown';
     }
 
-    // Override for terminal states
-    if (result.terminalState === 'booking_confirmed') {
+    // Override for terminal states OR persistent flags
+    if (result.terminalState === 'booking_confirmed' || result.bookingConfirmedThisTurn) {
       primaryIntent = 'confirming_booking';
     } else if (result.terminalState === 'transfer_initiated') {
       primaryIntent = 'initiating_transfer';
@@ -963,8 +1064,10 @@ Return ONLY the JSON, no markdown.`;
 
     // Override for specific confirmation subjects
     // IMPORTANT: Don't override terminal state intents (booking, transfer, goodbye)
+    // Also don't override if booking was confirmed this turn (even with follow-up question)
     const isTerminalIntent = result.terminalState && result.terminalState !== 'none';
-    if (result.category === 'confirm_or_deny' && !isTerminalIntent) {
+    const shouldPreserveBookingIntent = result.bookingConfirmedThisTurn === true;
+    if (result.category === 'confirm_or_deny' && !isTerminalIntent && !shouldPreserveBookingIntent) {
       switch (result.confirmationSubject) {
         case 'spelling_correct':
           primaryIntent = 'confirming_spelling';
@@ -995,6 +1098,10 @@ Return ONLY the JSON, no markdown.`;
         primaryIntent = 'providing_address';
       } else if (/parking/i.test(result.infoProvided || '')) {
         primaryIntent = 'providing_parking_info';
+      } else if (/hours/i.test(result.infoProvided || '')) {
+        primaryIntent = 'providing_hours_info';
+      } else if (/card_reminder/i.test(result.infoProvided || '')) {
+        primaryIntent = 'reminding_bring_card';
       } else {
         primaryIntent = 'searching_availability';
       }
@@ -1009,6 +1116,88 @@ Return ONLY the JSON, no markdown.`;
       requiresUserResponse: !terminalIntents.includes(primaryIntent),
       reasoning: result.reasoning,
     };
+  }
+
+  /**
+   * Check for follow-up questions after booking confirmation
+   * When agent confirms booking but asks "Would you like the address?", we should
+   * treat this as a confirm_or_deny question, NOT a terminal state
+   */
+  private checkForFollowUpQuestion(
+    agentResponse: string,
+    originalResult: CategoryClassificationResult
+  ): CategoryClassificationResult | null {
+    // Patterns for follow-up questions after booking confirmation
+    // These are ordered by specificity - more specific patterns first
+    const addressQuestionPatterns = [
+      // Direct questions at end of message
+      /would you like the address\s*\??\s*$/i,
+      /want the address\s*\??\s*$/i,
+      /like the address\s*\??\s*$/i,
+      // General patterns anywhere in message
+      /\bwould you like (the|an?)\s*address\b/i,
+      /\bwant (the|an?)\s*address\b/i,
+      /\bneed (the|an?)\s*address\b/i,
+      /\bprovide (the|an?)\s*address\b/i,
+      /\bshould I (give|send|provide) you (the|an?)\s*address\b/i,
+      /\bdo you (want|need) (the|an?)\s*address\b/i,
+      // Question ending with "address?"
+      /\baddress\s*\?\s*$/i,
+    ];
+
+    const parkingQuestionPatterns = [
+      /\bwould you like (the\s+)?parking (info|information)\b/i,
+      /\bwant (the\s+)?parking (info|information)\b/i,
+      /\bparking info\s*\?\s*$/i,
+    ];
+
+    const anythingElsePatterns = [
+      /\bis there anything else\b/i,
+      /\banything else I can help\b/i,
+      /\banything else\s*\?\s*$/i,
+    ];
+
+    // Check for address question
+    for (const pattern of addressQuestionPatterns) {
+      if (pattern.test(agentResponse)) {
+        return {
+          ...originalResult,
+          category: 'confirm_or_deny' as ResponseCategory,
+          confirmationSubject: 'wants_address' as ConfirmationSubject,
+          terminalState: 'none' as TerminalState, // NOT terminal - user needs to respond
+          reasoning: 'Booking confirmed but agent asking about address - requires user response',
+        };
+      }
+    }
+
+    // Check for parking question
+    for (const pattern of parkingQuestionPatterns) {
+      if (pattern.test(agentResponse)) {
+        return {
+          ...originalResult,
+          category: 'confirm_or_deny',
+          confirmationSubject: 'wants_parking_info',
+          terminalState: 'none',
+          reasoning: 'Booking confirmed but agent asking about parking - requires user response',
+        };
+      }
+    }
+
+    // Check for "anything else" question
+    for (const pattern of anythingElsePatterns) {
+      if (pattern.test(agentResponse)) {
+        return {
+          ...originalResult,
+          category: 'confirm_or_deny',
+          confirmationSubject: 'general',
+          terminalState: 'none',
+          reasoning: 'Booking confirmed but agent asking if anything else needed',
+        };
+      }
+    }
+
+    // No follow-up question detected - proceed with terminal state
+    return null;
   }
 
   /**
