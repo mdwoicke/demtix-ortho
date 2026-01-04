@@ -522,23 +522,43 @@ export class GoalEvaluator {
 
       const content = turn.content;
 
-      // Pattern 1: PAYLOAD: { ... "appointmentGUID": "value" ... }
-      const payloadMatch = content.match(/PAYLOAD:\s*(\{[\s\S]*?\})/i);
-      if (payloadMatch) {
-        try {
-          const payload = JSON.parse(payloadMatch[1]);
-          if ('appointmentGUID' in payload) {
-            const guid = payload.appointmentGUID;
-            // Check if it's a valid GUID (not null, not empty, not "null" string)
-            const isValid = guid && guid !== 'null' && guid !== '' && typeof guid === 'string';
-            return {
-              found: true,
-              appointmentGUID: isValid ? guid : null,
-              turnNumber: i + 1, // 1-indexed
-            };
+      // Pattern 1: PAYLOAD: { ... } - extract JSON with proper brace matching
+      const payloadStart = content.indexOf('PAYLOAD:');
+      if (payloadStart !== -1) {
+        const jsonStart = content.indexOf('{', payloadStart);
+        if (jsonStart !== -1) {
+          let braceCount = 0;
+          let jsonEnd = jsonStart;
+          for (let j = jsonStart; j < content.length; j++) {
+            if (content[j] === '{') braceCount++;
+            else if (content[j] === '}') braceCount--;
+            if (braceCount === 0) {
+              jsonEnd = j + 1;
+              break;
+            }
           }
-        } catch (e) {
-          // JSON parse failed, continue looking
+          const payloadStr = content.slice(jsonStart, jsonEnd);
+          try {
+            const payload = JSON.parse(payloadStr);
+            if ('appointmentGUID' in payload) {
+              const guid = payload.appointmentGUID;
+              const isValid = guid && guid !== 'null' && guid !== '' && typeof guid === 'string';
+              return { found: true, appointmentGUID: isValid ? guid : null, turnNumber: i + 1 };
+            }
+            if (Array.isArray(payload.children) && payload.children.length > 0) {
+              const firstChild = payload.children[0];
+              if (firstChild && 'appointmentGUID' in firstChild) {
+                const guid = firstChild.appointmentGUID;
+                const isValid = guid && guid !== 'null' && guid !== '' && typeof guid === 'string';
+                return { found: true, appointmentGUID: isValid ? guid : null, turnNumber: i + 1 };
+              }
+            }
+            if (payload.callSummary && payload.callSummary.booked === true) {
+              return { found: true, appointmentGUID: 'CONFIRMED_VIA_CALLSUMMARY', turnNumber: i + 1 };
+            }
+          } catch (e) {
+            // JSON parse failed
+          }
         }
       }
 

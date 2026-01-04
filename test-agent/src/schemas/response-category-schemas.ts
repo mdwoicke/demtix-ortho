@@ -54,6 +54,7 @@ export const DataFieldCategorySchema = z.enum([
   // Insurance & needs
   'insurance_info',
   'special_needs',
+  'card_reminder', // Agent reminded to bring insurance card
 
   // Preference fields
   'time_preference',
@@ -135,6 +136,9 @@ export const CategoryClassificationResultSchema = z.object({
   // Flow indicators
   bookingMentioned: z.boolean().default(false),
   transferMentioned: z.boolean().default(false),
+
+  // Persistent flags - survive follow-up question overrides
+  bookingConfirmedThisTurn: z.boolean().default(false),
 
   // Debugging
   reasoning: z.string().optional(),
@@ -229,6 +233,7 @@ export const FIELD_TO_LEGACY_INTENT: Record<DataFieldCategory, string> = {
   'previous_ortho_treatment': 'asking_previous_ortho',
   'insurance_info': 'asking_insurance',
   'special_needs': 'asking_special_needs',
+  'card_reminder': 'reminding_bring_card',
   'time_preference': 'asking_time_preference',
   'location_preference': 'asking_location_preference',
   'day_preference': 'asking_time_preference',

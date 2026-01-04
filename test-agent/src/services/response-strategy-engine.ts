@@ -62,7 +62,19 @@ export interface ResponseStrategyContext {
 
   /** Turn number */
   turnNumber: number;
+
+  /** Test ID for special behavior triggers */
+  testId?: string;
+
+  /** Test goals for determining special behaviors */
+  testGoals?: string[];
 }
+
+// Special behavior constants
+const CANCEL_TEST_IDS = ['GOAL-ERR-004'];
+const SILENCE_TEST_IDS = ['GOAL-ERR-007'];
+const CANCEL_TRIGGER_TURN = 4;  // Cancel after 4 turns of providing data
+const SILENCE_TRIGGER_TURN = 3; // Go silent after 3 turns
 
 // =============================================================================
 // Response Strategy Engine
@@ -79,6 +91,39 @@ export class ResponseStrategyEngine {
   }
 
   /**
+   * Check for special test behaviors like cancel or silence
+   * Returns the special response, or null if normal processing should continue
+   */
+  private checkSpecialBehaviors(
+    testId: string,
+    turnNumber: number,
+    persona: UserPersona
+  ): string | null {
+    // Check for CANCEL test - user should cancel mid-conversation
+    if (CANCEL_TEST_IDS.includes(testId) && turnNumber >= CANCEL_TRIGGER_TURN) {
+      console.log(`[ResponseStrategyEngine] Special behavior: CANCEL triggered at turn ${turnNumber}`);
+      return "Actually, never mind. I need to cancel. I'll call back another time.";
+    }
+
+    // Check for SILENCE test - user goes silent after a few turns
+    if (SILENCE_TEST_IDS.includes(testId) && turnNumber >= SILENCE_TRIGGER_TURN) {
+      console.log(`[ResponseStrategyEngine] Special behavior: SILENCE triggered at turn ${turnNumber}`);
+      // Return empty string to simulate user not responding
+      // The test runner will need to handle this appropriately
+      return '';
+    }
+
+    // Also check by persona name as fallback
+    if (persona.name?.toLowerCase().includes('silent') && turnNumber >= SILENCE_TRIGGER_TURN) {
+      console.log(`[ResponseStrategyEngine] Special behavior: SILENCE (by persona) triggered at turn ${turnNumber}`);
+      return '';
+    }
+
+    // No special behavior
+    return null;
+  }
+
+  /**
    * Generate a response based on classification
    */
   async generateResponse(
@@ -86,6 +131,15 @@ export class ResponseStrategyEngine {
     persona: UserPersona,
     context: Partial<ResponseStrategyContext> = {}
   ): Promise<string> {
+    const turnNumber = context.turnNumber || 0;
+    const testId = context.testId || '';
+
+    // Check for special test behaviors FIRST
+    const specialResponse = this.checkSpecialBehaviors(testId, turnNumber, persona);
+    if (specialResponse !== null) {
+      return specialResponse;
+    }
+
     // Create helper instances
     const dataMapper = createDataMapper(persona, {
       currentChildIndex: context.currentChildIndex || 0,
@@ -99,7 +153,7 @@ export class ResponseStrategyEngine {
         return this.handleProvideData(classification, dataMapper, formatter);
 
       case 'confirm_or_deny':
-        return this.handleConfirmOrDeny(classification, dataMapper, formatter, persona);
+        return this.handleConfirmOrDeny(classification, dataMapper, formatter, persona, context);
 
       case 'select_from_options':
         return this.handleSelectFromOptions(classification, dataMapper, formatter, persona);
@@ -156,14 +210,33 @@ export class ResponseStrategyEngine {
     classification: CategoryClassificationResult,
     dataMapper: PersonaDataMapper,
     formatter: ResponseFormatter,
-    persona: UserPersona
+    persona: UserPersona,
+    context: Partial<ResponseStrategyContext> = {}
   ): string {
     const subject = classification.confirmationSubject || 'general';
     const expectedAnswer = classification.expectedAnswer || 'either';
     const dataFields = classification.dataFields || [];
+    const history = context.conversationHistory || [];
 
     // Determine answer based on context and persona
     let answer: 'yes' | 'no' = 'yes'; // Default to yes
+
+    // Get last agent message for scope clarification detection
+    const lastAgentMessage = [...history].reverse().find(t => t.role === 'assistant')?.content || '';
+
+    // Check for scope clarification (agent asking "Are you looking for orthodontics?")
+    // If caller's original request was non-ortho (cleaning, checkup, etc.), answer "no"
+    const isAskingAboutOrtho = /\b(looking for|calling about|need|want)\s*(orthodontic|ortho|braces|invisalign)/i.test(lastAgentMessage) ||
+                               /\bare you.*(orthodontic|ortho)/i.test(lastAgentMessage);
+    if (isAskingAboutOrtho) {
+      // Check original user message for non-ortho intent
+      const firstUserMsg = history.find(t => t.role === 'user')?.content || '';
+      const nonOrthoPatterns = /\b(cleaning|dental cleaning|checkup|check-up|check up|cavity|filling|hygienist|general dentist|general dentistry|regular dentist)\b/i;
+      if (nonOrthoPatterns.test(firstUserMsg)) {
+        console.log('[ResponseStrategyEngine] Scope clarification detected: original request was non-ortho, answering NO');
+        return formatter.formatDataResponse(['No, I need a dental cleaning']);
+      }
+    }
 
     // Check if this is a question about previous visit or existing patient status
     // These are commonly asked as yes/no questions but should use persona data
@@ -183,6 +256,21 @@ export class ResponseStrategyEngine {
       answer = hadBraces ? 'yes' : 'no';
       console.log(`[ResponseStrategyEngine] Previous ortho question: hadBracesBefore=${hadBraces}, answering: ${answer}`);
       return formatter.formatConfirmation(subject, answer);
+    }
+
+    // Check if this is a question about special needs
+    // "Any special needs or accommodations?" should provide the special needs data, not just "yes"
+    if (dataFields.includes('special_needs')) {
+      const currentChildIndex = 0; // Default to first child
+      const child = persona.inventory.children[currentChildIndex];
+      const specialNeeds = child?.specialNeeds;
+      if (specialNeeds && specialNeeds.toLowerCase() !== 'none') {
+        console.log(`[ResponseStrategyEngine] Special needs question: specialNeeds="${specialNeeds}"`);
+        return formatter.formatDataResponse([specialNeeds]);
+      } else {
+        console.log(`[ResponseStrategyEngine] Special needs question: no special needs`);
+        return formatter.formatDataResponse(['No special needs']);
+      }
     }
 
     // For most confirmations, persona should agree

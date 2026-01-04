@@ -120,6 +120,9 @@ const DATA_MAPPERS: Record<DataFieldCategory, DataMapperFn> = {
     return child.specialNeeds;
   },
 
+  // Card reminder is agent-provided, not user-provided
+  card_reminder: () => null,
+
   // Preference fields
   time_preference: (inv) => {
     if (inv.preferredTimeOfDay === 'morning') return 'Morning works best';

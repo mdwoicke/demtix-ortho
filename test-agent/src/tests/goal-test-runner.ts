@@ -83,6 +83,19 @@ function extractVolunteeredData(message: string): VolunteeredData[] {
     }
   }
 
+  // Special needs extraction - detect when user mentions special needs upfront
+  const specialNeedsPatterns = [
+    /\b(?:has|have|with)\s+special\s+needs\b/i,
+    /\bspecial\s+needs\s+(?:child|kid|son|daughter)\b/i,
+    /\b(?:autism|adhd|anxiety|sensory)\b/i,
+  ];
+  for (const pattern of specialNeedsPatterns) {
+    if (pattern.test(message)) {
+      extracted.push({ field: 'special_needs', value: 'mentioned in initial message' });
+      break;
+    }
+  }
+
   // Name extraction - look for "I'm [Name]" or "my name is [Name]" or "this is [Name]"
   const namePatterns = [
     /\b(?:i'?m|my name is|this is)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\b/i,
@@ -98,6 +111,26 @@ function extractVolunteeredData(message: string): VolunteeredData[] {
         extracted.push({ field: 'parent_name', value: name });
         break;
       }
+    }
+  }
+
+  // Child count extraction - detect when user mentions number of children upfront
+  const childCountPatterns = [
+    /\bmy\s+(one|two|three|four|five|\d+)\s+(child|children|kids?)\b/i,
+    /\b(one|two|three|four|five|\d+)\s+(child|children|kids?)\b/i,
+    /\bfor\s+my\s+(one|two|three|four|five|\d+)\s+(child|children|kids?)\b/i,
+    /\bschedule\b.{0,30}\b(one|two|three|four|five|\d+)\s+(child|children|kids?)\b/i,
+  ];
+  for (const pattern of childCountPatterns) {
+    const match = message.match(pattern);
+    if (match) {
+      const countWord = match[1].toLowerCase();
+      const countMap: Record<string, string> = {
+        'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5'
+      };
+      const count = countMap[countWord] || countWord;
+      extracted.push({ field: 'child_count', value: count });
+      break;
     }
   }
 
@@ -288,6 +321,7 @@ export class GoalTestRunner {
 
       // Track child index for multi-child scenarios
       let currentChildIndex = 0;
+      let lastDetectedChildOrdinal = 0; // Track to avoid double-advancing on repeat questions
       const providedFields = new Set<DataFieldCategory>();
 
       // Extract volunteered data from initial message
@@ -322,11 +356,23 @@ export class GoalTestRunner {
             break;
           }
 
-          // Detect child advancement
-          if (/\b(next|other|second|third)\s+(child|kid|patient)\b/i.test(lastAgentTurn.content)) {
-            if (currentChildIndex < personaToUse.inventory.children.length - 1) {
-              currentChildIndex++;
-              console.log(`[GoalTestRunner] Advanced to child ${currentChildIndex + 1}`);
+          // Detect child advancement - only advance when a NEW ordinal is detected
+          // This prevents double-advancing when agent repeats a question (e.g., after clarification)
+          const agentContent = lastAgentTurn.content.toLowerCase();
+          let detectedOrdinal = 0;
+          if (/\bfirst\s+(child|kid|patient)\b/i.test(agentContent)) detectedOrdinal = 1;
+          else if (/\bsecond\s+(child|kid|patient)\b/i.test(agentContent)) detectedOrdinal = 2;
+          else if (/\bthird\s+(child|kid|patient)\b/i.test(agentContent)) detectedOrdinal = 3;
+          else if (/\bfourth\s+(child|kid|patient)\b/i.test(agentContent)) detectedOrdinal = 4;
+          else if (/\b(next|other)\s+(child|kid|patient)\b/i.test(agentContent)) detectedOrdinal = lastDetectedChildOrdinal + 1;
+
+          if (detectedOrdinal > lastDetectedChildOrdinal) {
+            // Set index directly based on ordinal (ordinal 1 = index 0, ordinal 2 = index 1, etc.)
+            const targetIndex = detectedOrdinal - 1;
+            if (targetIndex < personaToUse.inventory.children.length) {
+              currentChildIndex = targetIndex;
+              lastDetectedChildOrdinal = detectedOrdinal;
+              console.log(`[GoalTestRunner] Advanced to child ${detectedOrdinal} (index ${currentChildIndex})`);
             }
           }
 
@@ -339,6 +385,7 @@ export class GoalTestRunner {
               providedFields,
               conversationHistory: transcript,
               turnNumber,
+              testId: testCase.id, // Pass test ID for special behavior triggers
             }
           );
 
@@ -346,6 +393,11 @@ export class GoalTestRunner {
           if (classification.dataFields) {
             for (const field of classification.dataFields) {
               providedFields.add(field);
+            }
+            // Card reminder is agent-provided, not user-provided - mark it immediately
+            if (classification.dataFields.includes('card_reminder')) {
+              progressTracker.markFieldCollected('card_reminder', 'Agent reminded to bring insurance card', turnNumber);
+              console.log(`[GoalTestRunner] ✓ card_reminder collected (agent mentioned it)`);
             }
           }
 

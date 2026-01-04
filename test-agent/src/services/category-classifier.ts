@@ -278,6 +278,24 @@ const PATTERN_RULES: PatternRule[] = [
     },
   },
   {
+    // Combined card reminder + special needs question (higher priority)
+    // When agent mentions bringing insurance card AND asks about special needs,
+    // we should classify as provide_data asking for special_needs
+    // AND track card_reminder in dataFields for goal evaluation
+    category: 'provide_data',
+    patterns: [
+      /\b(bring|remember).{0,80}(insurance|card).{0,100}special needs\b/i,
+      /\binsurance card.{0,100}special needs\b/i,
+      /\bverify.{0,30}coverage.{0,50}special needs\b/i,
+    ],
+    confidence: 0.90,
+    priority: 76, // Higher than standalone card_reminder
+    extractors: {
+      dataFields: () => ['special_needs', 'card_reminder'], // Track both fields
+      infoProvided: () => 'card_reminder',
+    },
+  },
+  {
     category: 'acknowledge',
     patterns: [
       /\bplease (remember to )?bring (your )?insurance card\b/i,
@@ -378,14 +396,16 @@ const PATTERN_RULES: PatternRule[] = [
     },
   },
   {
+    // Spelling request - higher priority than caller_name to avoid "Can you spell your full name" matching caller_name
     category: 'provide_data',
     patterns: [
       /\b(spell|spelling)\b.*\bname\b/i,
       /\bhow do you spell\b/i,
       /\bcan you spell that\b/i,
+      /\bcan you spell your (full |last |first )?name\b/i,
     ],
     confidence: 0.90,
-    priority: 59,
+    priority: 61, // Higher than caller_name (60)
     extractors: {
       dataFields: () => ['caller_name_spelling'],
     },
@@ -522,6 +542,8 @@ const PATTERN_RULES: PatternRule[] = [
       // Patterns for multiple children
       /\bhave (either of |any of )?(your )?(children|kids) been (to |at )?(our |this |the )?office before\b/i,
       /\b(children|kids) been (here|to our office) before\b/i,
+      // "them" as pronoun reference to children
+      /\bhave (any of )?them been (to )?(our |this |the )?office before\b/i,
     ],
     confidence: 0.88,
     priority: 49,
@@ -621,12 +643,32 @@ const PATTERN_RULES: PatternRule[] = [
   // ==========================================================================
   // ACKNOWLEDGE (Information Provided)
   // ==========================================================================
+  // Combined address + parking pattern (higher priority - check first)
+  {
+    category: 'acknowledge',
+    patterns: [
+      // Address with parking in same message
+      /\b(Avenue|Ave|Street|St|Road|Rd|Boulevard|Blvd|Drive|Dr).+\b(park|parking)\b/i,
+      /\baddress.+\b(park|parking)\b/i,
+      /\blocated.+\b(park|parking)\b/i,
+    ],
+    confidence: 0.88,
+    priority: 32, // Higher than individual patterns
+    extractors: {
+      terminalState: () => 'none',
+      infoProvided: () => 'address_and_parking',
+    },
+  },
   {
     category: 'acknowledge',
     patterns: [
       /\b(the\s+)?address is\b/i,
       /\blocated at\b/i,
       /\boffice is at\b/i,
+      // Match "It's [number] [street name]" pattern (e.g., "It's 2301 East Allegheny Avenue")
+      /\bIt('s| is)\s+\d+\s+[\w\s]+?(Avenue|Ave|Street|St|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Way)\b/i,
+      // Match street address with suite/unit (e.g., "2301 East Allegheny Avenue, Suite 300")
+      /\b\d+\s+[\w\s]+?(Avenue|Ave|Street|St|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Way).{0,20}(Suite|Ste|Unit|#)\s*\d+/i,
     ],
     confidence: 0.85,
     priority: 30,
@@ -1094,7 +1136,10 @@ Return ONLY the JSON, no markdown.`;
 
     // Handle acknowledge
     if (result.category === 'acknowledge' && result.terminalState === 'none') {
-      if (/address/i.test(result.infoProvided || '')) {
+      // Check for combined address + parking first
+      if (result.infoProvided === 'address_and_parking') {
+        primaryIntent = 'providing_address_and_parking';
+      } else if (/address/i.test(result.infoProvided || '')) {
         primaryIntent = 'providing_address';
       } else if (/parking/i.test(result.infoProvided || '')) {
         primaryIntent = 'providing_parking_info';
