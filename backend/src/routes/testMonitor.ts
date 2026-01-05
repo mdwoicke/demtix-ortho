@@ -11,6 +11,13 @@ import * as testMonitorController from '../controllers/testMonitorController';
 const router = Router();
 
 // ============================================================================
+// DASHBOARD STATS ROUTE
+// ============================================================================
+
+// GET /api/test-monitor/dashboard-stats - Get dashboard statistics for TestHealthWidget
+router.get('/dashboard-stats', testMonitorController.getDashboardStats);
+
+// ============================================================================
 // TEST EXECUTION ROUTES
 // ============================================================================
 
@@ -229,6 +236,9 @@ router.get('/ab/stats', testMonitorController.getABStats);
 
 // POST /api/test-monitor/sandboxes/test-langfuse - Test LangFuse connection
 router.post('/sandboxes/test-langfuse', testMonitorController.testLangfuseConnection);
+
+// POST /api/test-monitor/sandboxes/test-flowise - Test Flowise endpoint connection
+router.post('/sandboxes/test-flowise', testMonitorController.testFlowiseConnection);
 
 // GET /api/test-monitor/sandboxes/comparison/tests - Get available tests for comparison
 router.get('/sandboxes/comparison/tests', testMonitorController.getComparisonTests);

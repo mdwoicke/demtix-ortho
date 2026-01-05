@@ -9,9 +9,18 @@ const allowedOrigins = [
   'http://localhost:5173', // Vite dev server default
   'http://localhost:5174', // Alternate Vite port
   'http://localhost:3000', // Alternate frontend port
-  'http://192.168.1.247:5174', // Local network access
   process.env.FRONTEND_URL || '', // Production frontend URL
 ].filter(Boolean);
+
+// Pattern for local network IPs (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+const isLocalNetworkOrigin = (origin: string): boolean => {
+  const localPatterns = [
+    /^https?:\/\/192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$/,
+    /^https?:\/\/10\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?$/,
+    /^https?:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\.\d{1,3}\.\d{1,3}(:\d+)?$/,
+  ];
+  return localPatterns.some(pattern => pattern.test(origin));
+};
 
 export const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
@@ -20,7 +29,8 @@ export const corsOptions: cors.CorsOptions = {
       return callback(null, true);
     }
 
-    if (allowedOrigins.includes(origin)) {
+    // Allow explicitly listed origins or any local network IP
+    if (allowedOrigins.includes(origin) || isLocalNetworkOrigin(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));

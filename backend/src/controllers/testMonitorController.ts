@@ -272,6 +272,95 @@ function getTestDetails(db: BetterSqlite3.Database, testId: string, runId: strin
 }
 
 /**
+ * GET /api/test-monitor/dashboard-stats
+ * Get dashboard statistics for goal tests (for TestHealthWidget)
+ */
+export async function getDashboardStats(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const db = getTestAgentDb();
+
+    // Get the most recent run
+    const lastRunRow = db.prepare(`
+      SELECT run_id, started_at, completed_at, status, total_tests, passed, failed, skipped
+      FROM test_runs
+      ORDER BY started_at DESC
+      LIMIT 1
+    `).get() as any;
+
+    // Get recent failures (last 5)
+    const recentFailuresRows = db.prepare(`
+      SELECT tr.test_id, tr.test_name, tr.run_id, tr.started_at as failed_at
+      FROM test_results tr
+      WHERE tr.status = 'failed'
+      ORDER BY tr.started_at DESC
+      LIMIT 5
+    `).all() as any[];
+
+    // Calculate trend (compare last run to previous run)
+    let trend = { direction: 'stable' as 'up' | 'down' | 'stable', changePercent: 0 };
+    if (lastRunRow) {
+      const previousRunRow = db.prepare(`
+        SELECT passed, total_tests
+        FROM test_runs
+        WHERE started_at < ?
+        ORDER BY started_at DESC
+        LIMIT 1
+      `).get(lastRunRow.started_at) as any;
+
+      if (previousRunRow && previousRunRow.total_tests > 0 && lastRunRow.total_tests > 0) {
+        const currentPassRate = (lastRunRow.passed / lastRunRow.total_tests) * 100;
+        const previousPassRate = (previousRunRow.passed / previousRunRow.total_tests) * 100;
+        const change = currentPassRate - previousPassRate;
+
+        if (Math.abs(change) > 1) {
+          trend = {
+            direction: change > 0 ? 'up' : 'down',
+            changePercent: Math.abs(change),
+          };
+        }
+      }
+    }
+
+    // Check if there's an active execution
+    const activeExecutionRow = db.prepare(`
+      SELECT run_id
+      FROM test_runs
+      WHERE status = 'running'
+      ORDER BY started_at DESC
+      LIMIT 1
+    `).get() as any;
+
+    db.close();
+
+    const stats = {
+      lastRun: lastRunRow ? {
+        runId: lastRunRow.run_id,
+        status: lastRunRow.status,
+        passRate: lastRunRow.total_tests > 0
+          ? (lastRunRow.passed / lastRunRow.total_tests) * 100
+          : 0,
+        passed: lastRunRow.passed,
+        failed: lastRunRow.failed,
+        total: lastRunRow.total_tests,
+        completedAt: lastRunRow.completed_at,
+      } : null,
+      recentFailures: recentFailuresRows.map(row => ({
+        testId: row.test_id,
+        testName: row.test_name,
+        runId: row.run_id,
+        failedAt: row.failed_at,
+      })),
+      trend,
+      isExecutionActive: !!activeExecutionRow,
+    };
+
+    res.json({ success: true, data: stats });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * GET /api/test-monitor/runs
  * List all test runs
  */
@@ -1002,8 +1091,13 @@ export async function getPromptFiles(req: Request, res: Response, next: NextFunc
     db.close();
 
     // Map to same format as production files (PromptFile type)
-    const files = ['system_prompt', 'scheduling_tool', 'patient_tool'].map(fileKey => {
+    const files = ['system_prompt', 'scheduling_tool', 'patient_tool', 'nodered_flow'].map(fileKey => {
       const sandboxFile = sandboxFiles.find((f: any) => f.file_key === fileKey);
+      const getFileType = (key: string) => {
+        if (key === 'system_prompt') return 'markdown';
+        if (key === 'nodered_flow') return 'json';
+        return 'javascript';
+      };
       return {
         fileKey,
         filePath: `sandbox://${context}/${fileKey}`, // Virtual path for sandbox files
@@ -1013,7 +1107,7 @@ export async function getPromptFiles(req: Request, res: Response, next: NextFunc
         updatedAt: sandboxFile?.updated_at || new Date().toISOString(),
         // Additional sandbox-specific fields
         exists: !!sandboxFile,
-        fileType: fileKey === 'system_prompt' ? 'markdown' : 'javascript',
+        fileType: getFileType(fileKey),
       };
     });
 
@@ -3839,6 +3933,86 @@ export async function testLangfuseConnection(
 }
 
 /**
+ * Test Flowise endpoint connection
+ * Proxies the request from frontend to avoid CORS issues
+ */
+export async function testFlowiseConnection(
+  req: Request,
+  res: Response,
+  _next: NextFunction
+): Promise<void> {
+  try {
+    const { endpoint, apiKey } = req.body;
+
+    if (!endpoint) {
+      res.status(400).json({
+        success: false,
+        error: 'Missing required field: endpoint',
+      });
+      return;
+    }
+
+    // Validate URL format
+    try {
+      new URL(endpoint);
+    } catch {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid endpoint URL format',
+      });
+      return;
+    }
+
+    // Build headers
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (apiKey) {
+      headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+
+    // Test connection by sending a simple message
+    const startTime = Date.now();
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ question: 'Hello' }),
+    });
+
+    const responseTimeMs = Date.now() - startTime;
+
+    if (response.ok) {
+      res.json({
+        success: true,
+        data: {
+          success: true,
+          message: 'Flowise endpoint is reachable',
+          responseTimeMs,
+        },
+      });
+    } else {
+      const errorText = await response.text();
+      res.json({
+        success: true,
+        data: {
+          success: false,
+          message: `HTTP ${response.status}: ${errorText.substring(0, 200)}`,
+          responseTimeMs,
+        },
+      });
+    }
+  } catch (error: any) {
+    res.json({
+      success: true,
+      data: {
+        success: false,
+        message: `Connection failed: ${error.message}`,
+      },
+    });
+  }
+}
+
+/**
  * Get all files for a sandbox
  */
 export async function getSandboxFiles(
@@ -4024,6 +4198,7 @@ export async function saveSandboxFile(
         system_prompt: { displayName: 'System Prompt', fileType: 'markdown' },
         patient_tool: { displayName: 'Patient Tool', fileType: 'json' },
         scheduling_tool: { displayName: 'Scheduling Tool', fileType: 'json' },
+        nodered_flow: { displayName: 'Node Red Flows', fileType: 'json' },
       };
 
       const config = fileConfig[fileKey] || { displayName: fileKey, fileType: 'text' };
@@ -4106,6 +4281,7 @@ export async function copySandboxFileFromProduction(
         system_prompt: { displayName: 'System Prompt', fileType: 'markdown' },
         patient_tool: { displayName: 'Patient Tool', fileType: 'json' },
         scheduling_tool: { displayName: 'Scheduling Tool', fileType: 'json' },
+        nodered_flow: { displayName: 'Node Red Flows', fileType: 'json' },
       };
 
       const config = fileConfig[fileKey] || { displayName: fileKey, fileType: 'text' };
@@ -4273,7 +4449,7 @@ export async function copySandboxAllFromProduction(
     const { sandboxId } = req.params;
     db = getTestAgentDbWritable();
 
-    const fileKeys = ['system_prompt', 'patient_tool', 'scheduling_tool'];
+    const fileKeys = ['system_prompt', 'patient_tool', 'scheduling_tool', 'nodered_flow'];
     const results: any[] = [];
     const now = new Date().toISOString();
 
@@ -4317,6 +4493,7 @@ export async function copySandboxAllFromProduction(
           system_prompt: { displayName: 'System Prompt', fileType: 'markdown' },
           patient_tool: { displayName: 'Patient Tool', fileType: 'json' },
           scheduling_tool: { displayName: 'Scheduling Tool', fileType: 'json' },
+          nodered_flow: { displayName: 'Node Red Flows', fileType: 'json' },
         };
 
         const config = fileConfig[fileKey] || { displayName: fileKey, fileType: 'text' };
@@ -4881,7 +5058,7 @@ export async function uploadReferenceDocument(
     }
 
     // Validate file key
-    const validFileKeys = ['system_prompt', 'patient_tool', 'scheduling_tool'];
+    const validFileKeys = ['system_prompt', 'patient_tool', 'scheduling_tool', 'nodered_flow'];
     if (!validFileKeys.includes(fileKey)) {
       res.status(400).json({
         success: false,
