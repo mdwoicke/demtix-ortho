@@ -8,9 +8,9 @@
       "command": "npx",
       "args": ["-y", "shouting-mcp-langfuse"],
       "env": {
-        "LANGFUSE_HOST": "https://us.cloud.langfuse.com",
-        "LANGFUSE_PUBLIC_KEY": "pk-lf-1f0a05a9-2c72-456d-a033-2e5113084e97",
-        "LANGFUSE_SECRET_KEY": "sk-lf-a1134b7e-2af4-4ab6-a64e-f0ff05fa2750"
+        "LANGFUSE_HOST": "https://langfuse-6x3cj-u15194.vm.elestio.app",
+        "LANGFUSE_PUBLIC_KEY": "pk-lf-d8ac7be3-a04b-4720-b95f-b96fa98874ed",
+        "LANGFUSE_SECRET_KEY": "sk-lf-04345fa3-887d-4fc5-a386-3d12142202c7"
       }
     }
   }

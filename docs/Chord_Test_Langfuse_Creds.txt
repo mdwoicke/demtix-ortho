@@ -1,5 +1,5 @@
-https://us.cloud.langfuse.com
+https://langfuse-6x3cj-u15194.vm.elestio.app
 
-pk-lf-1f0a05a9-2c72-456d-a033-2e5113084e97
+pk-lf-d8ac7be3-a04b-4720-b95f-b96fa98874ed
 
-sk-lf-a1134b7e-2af4-4ab6-a64e-f0ff05fa2750
+sk-lf-04345fa3-887d-4fc5-a386-3d12142202c7

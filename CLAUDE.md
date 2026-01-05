@@ -2,6 +2,25 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+---
+## ⚠️ MANDATORY - App UI Version Sync (READ THIS FIRST)
+
+**EVERY TIME you edit ANY of these files, you MUST run the update script IMMEDIATELY after:**
+
+| File | Command |
+|------|---------|
+| `nodered/nodered_Cloud9_flows.json` | `cd test-agent && node scripts/update-prompt-version.js nodered_flow "<description>"` |
+| `docs/v1/nodered_Cloud9_flows.json` | `cd test-agent && node scripts/update-prompt-version.js nodered_flow "<description>"` |
+| `docs/v1/Chord_Cloud9_SystemPrompt.md` | `cd test-agent && node scripts/update-prompt-version.js system_prompt "<description>"` |
+| `docs/v1/chord_dso_patient_Tool.json` | `cd test-agent && node scripts/update-prompt-version.js patient_tool "<description>"` |
+| `docs/v1/schedule_appointment_dso_Tool.json` | `cd test-agent && node scripts/update-prompt-version.js scheduling_tool "<description>"` |
+
+**NO EXCEPTIONS. Do NOT skip this step. The App UI "Prompt Versions" panel must always reflect the latest changes.**
+
+The hook at `.claude/hooks/sync-v1-to-langfuse.js` may auto-sync, but ALWAYS verify by running the script manually if in doubt.
+
+---
+
 ## Project Overview
 
 This repository contains API integration specifications for Cloud 9 Ortho (Dentrix Orthodontic practice management system). The primary artifact is a Postman collection that documents and tests the Cloud 9 Partner API endpoints.
@@ -57,7 +76,7 @@ When updating V1 prompts (especially `Chord_Cloud9_SystemPrompt.md`), you MUST s
    - Content must have double curly brackets `{{` escaped for Flowise Mustache templates
 
 2. **Langfuse Cloud** (for prompt management):
-   - Host: `https://us.cloud.langfuse.com`
+   - Host: `https://langfuse-6x3cj-u15194.vm.elestio.app`
    - Prompt name: "System Prompt"
    - Use MCP tools or direct API to create new version
    - Same double curly bracket escaping required
@@ -79,9 +98,13 @@ The hook `.claude/hooks/sync-v1-to-langfuse.js` attempts to sync both automatica
    - **Creates an ESCAPED version** with `{{` `}}` for Flowise Mustache templates
    - Updates the database with just the JavaScript content
 
-**CRITICAL - Flowise requires escaped curly brackets!**
+**CRITICAL - Flowise curly bracket escaping (ONLY when needed):**
 
-Flowise uses Mustache templates, so all `{` must be `{{` and all `}` must be `}}`.
+Only escape curly brackets (`{` → `{{`, `}` → `}}`) when generating:
+1. **System prompts** (`Chord_Cloud9_SystemPrompt.md` → `system_prompt_escaped.md`)
+2. **Tools that generate JavaScript** (`scheduling_tool_func.js` → `scheduling_tool_func_escaped.js`)
+
+Do NOT escape curly brackets in other contexts (regular code, JSON configs, etc.).
 
 **Output files:**
 - `docs/v1/scheduling_tool_func.js` - Raw JavaScript (for reference only)
@@ -91,6 +114,13 @@ Flowise uses Mustache templates, so all `{` must be `{{` and all `}` must be `}}
 - `docs/v1/system_prompt_escaped.md` - **USE THIS FOR FLOWISE** (auto-escaped)
 
 **NEVER save the entire tool JSON to the database** - only the JavaScript func portion is needed for versioning and deployment.
+
+**ALWAYS add new versions to App UI:**
+
+When updating prompts, Node-RED flows, or tools:
+1. **Include version number in file header** (e.g., `<!-- v45 -->` or `// v45`)
+2. **Add the new version to the App UI** via the update script or database
+3. Never skip the App UI update - this ensures version history is tracked
 
 ## Caching Configuration
 

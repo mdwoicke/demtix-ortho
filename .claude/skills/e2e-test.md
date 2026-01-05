@@ -12,19 +12,25 @@ description: End-to-end testing and debugging workflow for Allie IVA (orthodonti
 | Task | Command |
 |------|---------|
 | **Validate prompt first** | `npm run validate:prompt` |
-| Run happy path tests | `cd test-agent && npm run run:happy` |
-| Run all tests | `cd test-agent && npm run run` |
-| Run specific test | `cd test-agent && npx ts-node src/index.ts run --scenario HAPPY-001` |
-| Run by category | `cd test-agent && npm run run -- --category edge-case` |
-| Run failed tests only | `cd test-agent && npm run run:failed` |
+| **Run all GOAL tests (parallel)** | `cd test-agent && npx ts-node src/index.ts run --scenarios GOAL-HAPPY-001,GOAL-HAPPY-002,GOAL-HAPPY-003,GOAL-HAPPY-004,GOAL-HAPPY-005,GOAL-EDGE-001,GOAL-EDGE-002,GOAL-EDGE-003,GOAL-EDGE-004,GOAL-EDGE-005,GOAL-EDGE-006,GOAL-EDGE-007,GOAL-EDGE-008,GOAL-EDGE-009,GOAL-EDGE-010,GOAL-EDGE-011,GOAL-ERR-001,GOAL-ERR-002,GOAL-ERR-003,GOAL-ERR-004,GOAL-ERR-005,GOAL-ERR-006,GOAL-ERR-007 -n 5` |
+| **Run GOAL tests via script** | `cd test-agent && node scripts/run-all-goal-tests.js` |
+| Run happy path tests (parallel) | `cd test-agent && npx ts-node src/index.ts run --scenarios GOAL-HAPPY-001,GOAL-HAPPY-002,GOAL-HAPPY-003,GOAL-HAPPY-004,GOAL-HAPPY-005 -n 5` |
+| Run legacy tests | `cd test-agent && npm run run` |
+| Run specific test | `cd test-agent && npx ts-node src/index.ts run --scenario GOAL-HAPPY-001` |
+| Run failed tests only (parallel) | `cd test-agent && npx ts-node src/index.ts run --failed -n 3` |
 | View last results | `cd test-agent && npm run results` |
 | View recommendations | `cd test-agent && npm run recommendations` |
 | Generate report | `cd test-agent && npm run report` |
 | List all scenarios | `cd test-agent && npx ts-node src/index.ts scenarios` |
 | Check regressions | `cd test-agent && npx ts-node src/index.ts regression-check` |
-| View transcript | `cd test-agent && npx ts-node src/index.ts transcript HAPPY-001` |
+| View transcript | `cd test-agent && npx ts-node src/index.ts transcript GOAL-HAPPY-001` |
 | Debug via Langfuse | `node langfuse-debug.js` |
 | Clear test data | `cd test-agent && npx ts-node src/index.ts clear --force` |
+
+### Parallel Execution Options
+- `-n 5` - Run 5 tests in parallel (recommended, ~5X faster)
+- `-n 3` - Use for lower concurrency if SQLite errors occur
+- `-r 2` - Retry flaky tests up to 2 times
 
 ---
 
@@ -408,7 +414,7 @@ node langfuse-debug.js
       "command": "npx",
       "args": ["-y", "shouting-mcp-langfuse"],
       "env": {
-        "LANGFUSE_HOST": "https://us.cloud.langfuse.com",
+        "LANGFUSE_HOST": "https://langfuse-6x3cj-u15194.vm.elestio.app",
         "LANGFUSE_PUBLIC_KEY": "pk-lf-...",
         "LANGFUSE_SECRET_KEY": "sk-lf-..."
       }
