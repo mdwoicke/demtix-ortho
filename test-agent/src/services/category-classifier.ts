@@ -539,11 +539,12 @@ const PATTERN_RULES: PatternRule[] = [
       /\bhas (your|the) (child|patient|son|daughter) been (to|at) (our|this|the) office before\b/i,
       /\b(child|patient|kid) (been|visited) (here|our office|this office) before\b/i,
       /\bvisited (us|this office|our office) before\b/i,
-      // Patterns for multiple children
-      /\bhave (either of |any of )?(your )?(children|kids) been (to |at )?(our |this |the )?office before\b/i,
-      /\b(children|kids) been (here|to our office) before\b/i,
+      // Patterns for multiple children - updated to handle "been seen at" and "any of our offices"
+      /\bhave (either of |any of )?(your )?(children|kids) (ever )?(been |been seen )(to |at )?(our |this |the |any of our )?(offices?|location) before\b/i,
+      /\bhas (either of |any of )?(your )?(children|kids) (ever )?(been |been seen )(to |at )?(our |this |the |any of our )?(offices?|location) before\b/i,
+      /\b(children|kids) (ever )?(been|been seen) (here|to our office|at our office|at any of our offices) before\b/i,
       // "them" as pronoun reference to children
-      /\bhave (any of )?them been (to )?(our |this |the )?office before\b/i,
+      /\bhave (any of )?them (ever )?(been|been seen) (to )?(our |this |the |any of our )?(offices?|location)? before\b/i,
     ],
     confidence: 0.88,
     priority: 49,

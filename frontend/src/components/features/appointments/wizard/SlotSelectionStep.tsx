@@ -301,7 +301,11 @@ export function SlotSelectionStep({
             placeholder="Select Location"
             options={locations.map((loc) => ({
               value: loc.guid,
-              label: loc.name,
+              label: loc.address?.city && loc.address?.state
+                ? `${loc.name} (${loc.address.city}, ${loc.address.state})`
+                : loc.address?.city
+                ? `${loc.name} (${loc.address.city})`
+                : loc.name,
             }))}
           />
 

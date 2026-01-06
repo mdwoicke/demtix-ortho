@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { createCloud9Client } from '../services/cloud9/client';
 import { Environment, isValidEnvironment } from '../config/cloud9';
 import { AppError, asyncHandler } from '../middleware/errorHandler';
-import { Cloud9Appointment, Cloud9AvailableSlot } from '../types/cloud9';
+import { Cloud9Appointment, Cloud9AvailableSlot, Cloud9Location, Cloud9AppointmentType } from '../types/cloud9';
 import { AppointmentModel } from '../models/Appointment';
 import logger from '../utils/logger';
 
@@ -42,14 +42,34 @@ export const getPatientAppointments = asyncHandler(
 
     const client = createCloud9Client(environment);
 
-    // Fetch appointments from Cloud 9 API
-    const response = await client.getPatientAppointments(patientGuid);
+    // Fetch appointments, locations, and appointment types from Cloud 9 API in parallel
+    const [appointmentsResponse, locationsResponse, appointmentTypesResponse] = await Promise.all([
+      client.getPatientAppointments(patientGuid),
+      client.getLocations(),
+      client.getAppointmentTypes(),
+    ]);
 
-    if (response.status === 'Error' || response.errorMessage) {
+    if (appointmentsResponse.status === 'Error' || appointmentsResponse.errorMessage) {
       throw new AppError(
-        response.errorMessage || 'Failed to fetch patient appointments',
+        appointmentsResponse.errorMessage || 'Failed to fetch patient appointments',
         500
       );
+    }
+
+    // Create a map of location GUID to location data for quick lookup
+    const locationMap = new Map<string, Cloud9Location>();
+    if (locationsResponse.status === 'Success' && locationsResponse.records) {
+      locationsResponse.records.forEach((loc: Cloud9Location) => {
+        locationMap.set(loc.LocationGUID, loc);
+      });
+    }
+
+    // Create a map of appointment type GUID to appointment type data for quick lookup
+    const appointmentTypeMap = new Map<string, Cloud9AppointmentType>();
+    if (appointmentTypesResponse.status === 'Success' && appointmentTypesResponse.records) {
+      appointmentTypesResponse.records.forEach((type: Cloud9AppointmentType) => {
+        appointmentTypeMap.set(type.AppointmentTypeGUID, type);
+      });
     }
 
     // Get local appointment data for scheduled_at timestamps
@@ -58,9 +78,12 @@ export const getPatientAppointments = asyncHandler(
       localAppointments.map((a) => [a.appointment_guid, a])
     );
 
-    // Transform appointment data
-    const appointments = response.records.map((appt: Cloud9Appointment) => {
+    // Transform appointment data with location and appointment type enrichment
+    const appointments = appointmentsResponse.records.map((appt: Cloud9Appointment) => {
       const localAppt = localAppointmentMap.get(appt.AppointmentGUID);
+      const location = appt.LocationGUID ? locationMap.get(appt.LocationGUID) : undefined;
+      const appointmentType = appt.AppointmentTypeGUID ? appointmentTypeMap.get(appt.AppointmentTypeGUID) : undefined;
+
       return {
         appointment_guid: appt.AppointmentGUID,
         patient_guid: appt.PatientGUID,
@@ -73,6 +96,7 @@ export const getPatientAppointments = asyncHandler(
         patient_gender: appt.PatientGender,
         appointment_date_time: appt.AppointmentDateTime,
         appointment_type_guid: appt.AppointmentTypeGUID,
+        appointment_type_code: appointmentType?.AppointmentTypeCode || null,
         appointment_type_description: appt.AppointmentTypeDescription,
         status: appt.AppointmentStatus,
         status_description: appt.AppointmentStatusDescription,
@@ -85,6 +109,10 @@ export const getPatientAppointments = asyncHandler(
         location_guid: appt.LocationGUID,
         location_code: appt.LocationCode,
         location_name: appt.LocationName,
+        location_city: location?.AddressCity || location?.LocationCity || null,
+        location_state: location?.AddressState || location?.LocationState || null,
+        location_address: location?.AddressStreet || null,
+        location_phone: location?.PhoneNumber || null,
         environment,
         scheduled_at: localAppt?.cached_at || null,
       };

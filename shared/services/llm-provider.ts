@@ -1,11 +1,15 @@
 /**
  * LLM Provider Abstraction
  * Strategy pattern to switch between Claude CLI and Anthropic API
+ * Enhanced with Langfuse tracing for comprehensive observability
  */
 
 import Anthropic from '@anthropic-ai/sdk';
 import { claudeCliService, ClaudeCliRequest } from './claude-cli-service';
 import { getLLMConfig, isClaudeCliEnabled, getApiKey } from '../config/llm-config';
+import { getLangfuseService } from './langfuse-service';
+import { getCurrentTraceContext } from './langfuse-context';
+import type { GenerationPurpose } from '../types/langfuse.types';
 
 // ============================================================================
 // Types
@@ -18,6 +22,10 @@ export interface LLMRequest {
   temperature?: number;
   systemPrompt?: string;
   timeout?: number;
+  /** Purpose of this LLM call - used for Langfuse tracing categorization */
+  purpose?: GenerationPurpose;
+  /** Additional metadata to include in Langfuse trace */
+  metadata?: Record<string, any>;
 }
 
 export interface LLMResponse {
@@ -194,30 +202,8 @@ export class LLMProvider {
   }
 
   /**
-   * Execute request via Claude CLI
-   */
-  private async executeViaCli(request: LLMRequest): Promise<LLMResponse> {
-    const cliRequest: ClaudeCliRequest = {
-      prompt: request.prompt,
-      model: request.model,
-      systemPrompt: request.systemPrompt,
-      timeout: request.timeout,
-    };
-
-    const cliResponse = await claudeCliService.execute(cliRequest);
-
-    return {
-      success: cliResponse.success,
-      content: cliResponse.result,
-      error: cliResponse.error,
-      usage: cliResponse.usage,
-      provider: 'cli',
-      durationMs: cliResponse.durationMs,
-    };
-  }
-
-  /**
    * Execute request via Anthropic API
+   * Includes Langfuse generation tracking for observability
    */
   private async executeViaApi(request: LLMRequest): Promise<LLMResponse> {
     if (!this.anthropicClient) {
@@ -229,16 +215,47 @@ export class LLMProvider {
     }
 
     const startTime = Date.now();
+    const config = getLLMConfig();
+    const model = request.model || config.defaultModel;
+
+    // Get Langfuse context and start generation tracking
+    const langfuse = getLangfuseService();
+    const traceContext = getCurrentTraceContext();
+    let generation: any = null;
+
+    if (traceContext && await langfuse.ensureInitialized()) {
+      try {
+        generation = await langfuse.startGeneration({
+          name: 'llm-provider-api',
+          traceId: traceContext.traceId,
+          parentObservationId: traceContext.parentObservationId,
+          model,
+          modelParameters: {
+            temperature: request.temperature ?? 0.2,
+            maxTokens: request.maxTokens || 4096,
+          },
+          input: {
+            prompt: request.prompt.substring(0, 1000), // Truncate for storage
+            systemPrompt: request.systemPrompt?.substring(0, 500),
+          },
+          metadata: {
+            provider: 'anthropic',
+            purpose: request.purpose || 'generic-llm-call',
+            ...request.metadata,
+          },
+        });
+      } catch (e: any) {
+        console.warn(`[LLMProvider] Langfuse generation start failed: ${e.message}`);
+      }
+    }
 
     try {
       const messages: Anthropic.MessageParam[] = [
         { role: 'user', content: request.prompt },
       ];
 
-      const config = getLLMConfig();
-
       const response = await this.anthropicClient.messages.create({
-        model: request.model || config.defaultModel,
+        model,
         max_tokens: request.maxTokens || 4096,
         temperature: request.temperature ?? 0.2,
         system: request.systemPrompt,
@@ -249,6 +266,24 @@ export class LLMProvider {
 
       const textContent = response.content.find(c => c.type === 'text');
       const content = textContent?.type === 'text' ? textContent.text : '';
+      const durationMs = Date.now() - startTime;
+
+      // End Langfuse generation with success
+      if (generation) {
+        try {
+          langfuse.endGeneration(generation.id, {
+            output: { content: content.substring(0, 1000) }, // Truncate for storage
+            usage: {
+              input: response.usage?.input_tokens || 0,
+              output: response.usage?.output_tokens || 0,
+              total: (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0),
+            },
+            level: 'DEFAULT',
+          });
+        } catch (e: any) {
+          console.warn(`[LLMProvider] Langfuse generation end failed: ${e.message}`);
+        }
+      }
 
       return {
         success: true,
@@ -258,16 +293,105 @@ export class LLMProvider {
           outputTokens: response.usage?.output_tokens || 0,
         },
         provider: 'api',
-        durationMs: Date.now() - startTime,
+        durationMs,
       };
     } catch (error: any) {
+      const durationMs = Date.now() - startTime;
+
+      // End Langfuse generation with error
+      if (generation) {
+        try {
+          langfuse.endGeneration(generation.id, {
+            output: { error: error.message },
+            level: 'ERROR',
+            statusMessage: error.message,
+          });
+        } catch (e: any) {
+          console.warn(`[LLMProvider] Langfuse generation error end failed: ${e.message}`);
+        }
+      }
+
       return {
         success: false,
         error: error.message,
         provider: 'api',
-        durationMs: Date.now() - startTime,
+        durationMs,
       };
     }
+  }
+
+  /**
+   * Execute request via Claude CLI
+   * Includes Langfuse generation tracking for observability
+   */
+  private async executeViaCli(request: LLMRequest): Promise<LLMResponse> {
+    const cliRequest: ClaudeCliRequest = {
+      prompt: request.prompt,
+      model: request.model,
+      systemPrompt: request.systemPrompt,
+      timeout: request.timeout,
+    };
+
+    // Get Langfuse context and start generation tracking
+    const langfuse = getLangfuseService();
+    const traceContext = getCurrentTraceContext();
+    let generation: any = null;
+
+    if (traceContext && await langfuse.ensureInitialized()) {
+      try {
+        generation = await langfuse.startGeneration({
+          name: 'llm-provider-cli',
+          traceId: traceContext.traceId,
+          parentObservationId: traceContext.parentObservationId,
+          model: request.model || 'claude-cli',
+          modelParameters: {},
+          input: {
+            prompt: request.prompt.substring(0, 1000),
+            systemPrompt: request.systemPrompt?.substring(0, 500),
+          },
+          metadata: {
+            provider: 'cli',
+            purpose: request.purpose || 'generic-llm-call',
+            ...request.metadata,
+          },
+        });
+      } catch (e: any) {
+        console.warn(`[LLMProvider] Langfuse CLI generation start failed: ${e.message}`);
+      }
+    }
+
+    const cliResponse = await claudeCliService.execute(cliRequest);
+
+    // End Langfuse generation
+    if (generation) {
+      try {
+        langfuse.endGeneration(generation.id, {
+          output: cliResponse.success
+            ? { content: cliResponse.result?.substring(0, 1000) }
+            : { error: cliResponse.error },
+          usage: cliResponse.usage
+            ? {
+                input: cliResponse.usage.inputTokens,
+                output: cliResponse.usage.outputTokens,
+                total: cliResponse.usage.inputTokens + cliResponse.usage.outputTokens,
+              }
+            : undefined,
+          level: cliResponse.success ? 'DEFAULT' : 'ERROR',
+          statusMessage: cliResponse.error,
+        });
+      } catch (e: any) {
+        console.warn(`[LLMProvider] Langfuse CLI generation end failed: ${e.message}`);
+      }
+    }
+
+    return {
+      success: cliResponse.success,
+      content: cliResponse.result,
+      error: cliResponse.error,
+      usage: cliResponse.usage,
+      provider: 'cli',
+      durationMs: cliResponse.durationMs,
+    };
   }
 }
 

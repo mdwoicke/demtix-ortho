@@ -1,0 +1,39 @@
+LocationGUID,LocationName,LocationCode,TimeZone,LocationAddress,LocationCity,LocationPostalCode,LocationPrintedName,LocationState
+09fa3bed-3619-4bef-80ef-020bca84ae80,DFC - Howell,DFHO,Eastern Standard Time,5315 US Hwy 9 N.,Howell,07731,DFC - Howell,NJ
+b976253a-dce8-4fea-b4fa-0eb28e3c69cf,CDH - Downingtown,CDDO,Eastern Standard Time,3915 W. Lincoln Hwy.,Downingtown,19335,CDH - Downingtown,PA
+5f133a58-20ac-4b75-87ec-0ffc00e58912,Spark - York,SPAY,Eastern Standard Time,928 Carlisle Rd,York,17404,Spark - York,PA
+4b070305-3ea3-424c-8128-116b64cf468c,Spark - Hazleton,SPAH,Eastern Standard Time,330 Laurel Mall Dr,West Hazleton,18202,Spark - Hazleton,PA
+204d556b-4c90-41bb-877d-139e567ff3db,Spark - Pottsville,SPAP,Eastern Standard Time,100 E. Union St,Pottsville,17901,Spark - Pottsville,PA
+e11c7c3b-6208-4e89-ac61-16a8f0723591,Ghosh - Pottsville,G2,Eastern Standard Time,1620 Mt. Hope Ave,Pottsville,17901,Ghosh Orthodontics - Pottsville,PA
+3a8a26db-82d5-40e2-be4e-18b3e196951b,CDH - West Grove,CDWG,Eastern Standard Time,"900 West Bailtmore Pike, Suite 203",West Grove,19390,CDH - West Grove,PA
+0a7eadb5-8b53-49ae-9b93-2bbae792d821,Spark - Harrisburg,SPHA,Eastern Standard Time,4425 Jonestown Rd,Harrisburg,17109,Spark - Harrisburg,PA
+62221d12-bd6e-4cd0-a476-3837820efe05,Spark - Lancaster,SPAL,Eastern Standard Time,886 Plaza Blvd,Lancaster,17601,Spark - Lancaster,PA
+15e6ceaa-11a4-468f-8803-3d7cbc1e5bcb,CDH - Springfield,CDSP,Eastern Standard Time,130 S. State Rd.,Springfield,19064,CDH - Springfield,PA
+5f274ff6-90a6-5ece-f3b5-41b71a8ffaa4,Nashville,A,Central Standard Time,1801 West End Ave.,Nashville,37203,CSDP,TN
+ee63ae00-a0da-4c9d-b3f6-4b2baea7c705,CPDO - Lawrenceburg,CPLA,Central Standard Time,185 Prosser Road,Lawrenceburg,38464,CPDO - Lawrenceburg,TN
+d618c1b6-c021-4e8c-a442-57baa08d0944,CPDO - Smyrna,CPSM,Central Standard Time,1540 Rock Springs Road,Smyrna,37167,CPDO - Smyrna,TN
+b24e3638-cd69-4f8a-a2d8-62cb7abadffa,DFC - Jackson,DFJA,Eastern Standard Time,21 South Hope Chapel Road,Jackson,08527,DFC - Jackson,NJ
+e6eb4032-8ed4-4871-8732-75ba9f475da3,DFC - Toms River,DFTR,Eastern Standard Time,"1256 Indian Head Rd, Units 16-18",Toms River,08755,DFC - Toms River,NJ
+85bab01e-f1f2-4ff1-9a34-7a47e9584d3b,Petras - Reading ,PETR,Eastern Standard Time,2951 St Lawrence Ave,Reading,19606,Petras - Reading ,PA
+3cb7c508-b219-4f35-8c13-867cf2f0d337,PDA - Cherry Hill,PDCH,Eastern Standard Time,805 Route 38,Cherry Hill,08002,PDA - Cherry Hill,NJ
+fb823bc5-0fa3-42e4-898c-92de65facd4a,CPDO - Murfreesboro,CPMU,Central Standard Time,277 Veterans Parkway Suite A,Murfreesboro,37128,CPDO - Murfreesboro,TN
+317d516f-7766-459a-9a75-a0fc291f1436,CDH - Warrington,CDWA,Eastern Standard Time,2210 Shetland Drive,Warrington,18976,CDH - Warrington,PA
+9abc0121-79cf-48b3-9884-a8ec02944dfe,CPDO - Cookeville,CPCO,Central Standard Time,510 S. Jefferson Ave,Cookeville,38501,,TN
+98b182f7-1e25-47b3-8da4-ab15a523e312,Spark - Reading,SPAR,Eastern Standard Time,5318 Allentown Pike,Temple,19560,Spark - Reading,PA
+fc50865f-bc59-4749-8e80-ac9f6fe03952,CPDO - Columbia,CPCA,Central Standard Time,927 N James Campbell Blvd Suite 102,Columbia,38401,CPDO - Columbia,TN
+3eb99533-bed9-46f2-b03f-aeb57e395446,Ghosh - Allentown,G3,Eastern Standard Time,"4979 Hamilton Blvd
+",Allentown,18106,Ghosh Orthodontics - Allentown,PA
+8be49cdc-4def-4119-b97d-b28565255ace,Werner - Greenfield,W2,Eastern Standard Time,300 E Boyd Ave,Greenfield,46140,Werner Orthodontics - Greenfield,IN
+59ea4a3a-babf-4015-b48c-b495a1b6d3a3,Werner - Indianapolis,W1,Eastern Standard Time,"9602 E Washington St., B",Indianapolis,46229,Werner Orthodontics - Indianapolis,IN
+bd6294f3-2871-4114-a46a-b5af02c986e6,CPDO - White House,CPWH,Central Standard Time,520 Hwy 76 Ste 9,White House,37188,CPDO - White House,TN
+45552253-8d2f-431b-870f-ca24bd01d201,CPDO - Clarksville,CPCL,Central Standard Time,495 Dunlop Lane Suite 112,Clarksville,37040,CPDO - Clarksville,TN
+5b10078b-23cf-4413-99b7-d7059de230c7,CDH - Northeast,CDNE,Eastern Standard Time,6595-C Roosevelt Blvd.,Philadelphia,19149,,PA
+4ad205a9-6549-48ad-845d-dd4d5952e2e3,CDH - Bensalem,CBEN,Eastern Standard Time,2361 Bristol Rd,Bensalem,19020,CDH - Bensalem,PA
+ff6e34d4-7f10-4123-a398-e20ad072ea2c,CDH - Exton,CDEX,Eastern Standard Time,319 N Pottstown Pike,Exton,19341,CDH - Exton,PA
+799d413a-5e1a-46a2-b169-e2108bf517d6,CDH - Allegheny 300M,CDAL,Eastern Standard Time,"2301 E Allegheny Ave,Ste 300M",Philadelphia,19134,CDH - Allegheny,PA
+fb75221c-4d05-4651-b75f-e2b85379ba9f,Spark - Camp Hill,SPAC,Eastern Standard Time,133 S. 32nd St.,Camp Hill,17011,Spark - Camp Hill,PA
+b5bf80e4-cc35-45b7-84f7-e6db4857266a,TRI - Bristol,TBR,Eastern Standard Time,235 Linden Square,Bristol,24202,Tri-Cities Orthodontics,VA
+1df68fd3-63b2-4256-8b60-e9b7a79b8072,TRI - Kingsport,TKP,Eastern Standard Time,"Eight Sheridan Square, Suite 400",Kingsport,37660,Tri-Cities Orthodontics,TN
+ed37df93-751c-49b2-a56f-ed73ee6834d9,Spark - Danville,SPAD,Eastern Standard Time,555 Mill St.,Danville,17821,Spark - Danville,PA
+1fef9297-7c8b-426b-b0d1-f2275136e48b,CDH - Allegheny 202,CALG,Eastern Standard Time,2301 E Allegheny Ave Suite 202,Philadelphia,19134,CDH - Allegheny,PA
+9eff2d8e-9c2a-434c-99d4-fa1f895e8070,Spark - Bethlehem,SPAB,Eastern Standard Time,3076 Schoenersville RD,Bethlehem,18017,Spark - Bethlehem,PA

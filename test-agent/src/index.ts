@@ -2,6 +2,7 @@
 /**
  * E2E Test Agent CLI
  * Command-line interface for running tests and viewing results
+ * Enhanced with Langfuse tracing lifecycle management
  */
 
 import 'dotenv/config';
@@ -22,6 +23,7 @@ import type { TestSuiteResult } from './core/agent';
 import * as fs from 'fs';
 import BetterSqlite3 from 'better-sqlite3';
 import path from 'path';
+import { getLangfuseService } from '../../shared/services';
 
 /**
  * Load goal test cases from database (GOAL-EDGE-* and GOAL-ERR-* tests)
@@ -186,8 +188,8 @@ async function runGoalTests(
 
       console.log(`[Worker ${workerId}] Starting: ${testIdWithRun}${retryLabel} - ${scenario.name}`);
 
-      // Create per-test runner with fresh session
-      const flowiseClient = new FlowiseClient();
+      // Create per-test runner with fresh session using active config from settings
+      const flowiseClient = await FlowiseClient.forActiveConfig();
       const intentDetector = new IntentDetector();
       const runner = new GoalTestRunner(flowiseClient, db, intentDetector);
 
@@ -323,18 +325,69 @@ const markdownReporter = new MarkdownReporter();
 let currentRunId: string | null = null;
 let currentDb: Database | null = null;
 
-// Handle graceful shutdown on SIGINT (Ctrl+C)
-process.on('SIGINT', () => {
-  console.log('\n[GoalTest] Received SIGINT, cleaning up...');
+/**
+ * Graceful shutdown handler - flushes Langfuse and cleans up resources
+ */
+async function gracefulShutdown(signal: string, exitCode: number): Promise<void> {
+  console.log(`\n[TestAgent] Received ${signal}, cleaning up...`);
+
+  // Abort current test run if any
   if (currentRunId && currentDb) {
     try {
       currentDb.abortTestRun(currentRunId);
-      console.log(`[GoalTest] Marked run ${currentRunId} as aborted`);
+      console.log(`[TestAgent] Marked run ${currentRunId} as aborted`);
     } catch (error: any) {
-      console.error(`[GoalTest] Failed to abort run: ${error.message}`);
+      console.error(`[TestAgent] Failed to abort run: ${error.message}`);
     }
   }
-  process.exit(130); // 128 + SIGINT signal number (2)
+
+  // Flush and shutdown Langfuse
+  try {
+    const langfuse = getLangfuseService();
+    console.log('[TestAgent] Flushing Langfuse traces...');
+    await langfuse.flush();
+    console.log('[TestAgent] Shutting down Langfuse...');
+    await langfuse.shutdown();
+    console.log('[TestAgent] Langfuse shutdown complete');
+  } catch (error: any) {
+    console.warn(`[TestAgent] Langfuse shutdown error: ${error.message}`);
+  }
+
+  process.exit(exitCode);
+}
+
+// Handle graceful shutdown on SIGINT (Ctrl+C)
+process.on('SIGINT', () => {
+  gracefulShutdown('SIGINT', 130).catch(() => process.exit(130)); // 128 + SIGINT signal number (2)
+});
+
+// Handle graceful shutdown on SIGTERM
+process.on('SIGTERM', () => {
+  gracefulShutdown('SIGTERM', 143).catch(() => process.exit(143)); // 128 + SIGTERM signal number (15)
+});
+
+// Handle uncaught exceptions - flush traces before crashing
+process.on('uncaughtException', async (error) => {
+  console.error('[TestAgent] Uncaught exception:', error);
+  try {
+    const langfuse = getLangfuseService();
+    await langfuse.flush();
+  } catch (e) {
+    // Ignore flush errors on crash
+  }
+  process.exit(1);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', async (reason, promise) => {
+  console.error('[TestAgent] Unhandled rejection at:', promise, 'reason:', reason);
+  try {
+    const langfuse = getLangfuseService();
+    await langfuse.flush();
+  } catch (e) {
+    // Ignore flush errors on crash
+  }
+  process.exit(1);
 });
 
 // Cleanup stale runs at startup
@@ -1321,8 +1374,8 @@ program
             continue;
           }
 
-          // Create runner
-          const flowiseClient = new FlowiseClient();
+          // Create runner using active config from settings
+          const flowiseClient = await FlowiseClient.forActiveConfig();
           const intentDetector = new IntentDetector();
           const runner = new GoalTestRunner(flowiseClient, db, intentDetector);
 

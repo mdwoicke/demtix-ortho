@@ -69,10 +69,15 @@ export function AppointmentCard({
       <div className={`${statusStyle.bg} px-6 py-4 border-b border-gray-200`}>
         <div className="flex items-start justify-between">
           <div className="flex-1">
-            <div className="flex items-center gap-3 mb-2">
+            <div className="flex items-center gap-3 mb-2 flex-wrap">
               <h3 className="text-xl font-bold text-gray-900">
                 {appointment.appointment_type_description || 'Appointment'}
               </h3>
+              {appointment.appointment_type_code && (
+                <span className="px-2 py-0.5 text-xs font-mono font-medium rounded bg-gray-200 text-gray-700">
+                  {appointment.appointment_type_code}
+                </span>
+              )}
               {appointment.status_description && (
                 <span className={`px-3 py-1 text-xs font-bold rounded-full ${statusStyle.badge} shadow-md`}>
                   {appointment.status_description}
@@ -145,8 +150,20 @@ export function AppointmentCard({
                 <p className="text-sm font-semibold text-gray-900 truncate">
                   {appointment.location_name}
                 </p>
-                {appointment.location_code && (
-                  <p className="text-xs text-gray-600 font-mono">{appointment.location_code}</p>
+                {(appointment.location_city || appointment.location_state) && (
+                  <p className="text-xs text-gray-600">
+                    {[appointment.location_city, appointment.location_state].filter(Boolean).join(', ')}
+                  </p>
+                )}
+                {appointment.location_address && (
+                  <p className="text-xs text-gray-600">{appointment.location_address}</p>
+                )}
+                {appointment.location_phone && (
+                  <p className="text-xs text-blue-600 font-medium">
+                    <a href={`tel:${appointment.location_phone}`} className="hover:underline">
+                      {appointment.location_phone}
+                    </a>
+                  </p>
                 )}
               </div>
             </div>

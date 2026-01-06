@@ -27,6 +27,11 @@ export interface Appointment {
   location_guid?: string;
   location_code?: string;
   location_name?: string;
+  location_city?: string;
+  location_state?: string;
+  location_address?: string;
+  location_phone?: string;
+  appointment_type_code?: string;
   environment?: string;
   scheduled_at?: string; // ISO timestamp of when the appointment was booked/created
 

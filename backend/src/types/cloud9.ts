@@ -14,6 +14,10 @@ export interface Cloud9Location {
   AddressState?: string;
   AddressPostalCode?: string;
   PhoneNumber?: string;
+  // Alternative field names returned by some API endpoints
+  LocationCity?: string;
+  LocationState?: string;
+  LocationPostalCode?: string;
 }
 
 // Provider/Chair Schedule types
@@ -65,6 +69,7 @@ export interface Cloud9Appointment {
   PatientGender?: string;
   AppointmentDateTime: string;
   AppointmentTypeGUID?: string;
+  AppointmentTypeCode?: string;
   AppointmentTypeDescription?: string;
   AppointmentStatus?: string;
   AppointmentStatusDescription?: string;

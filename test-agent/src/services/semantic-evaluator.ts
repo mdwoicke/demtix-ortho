@@ -3,6 +3,7 @@
  *
  * Uses Claude API or CLI to perform semantic analysis of chatbot responses,
  * replacing brittle regex patterns with AI-powered understanding.
+ * Enhanced with Langfuse tracing for comprehensive observability.
  *
  * Modes:
  * - real-time: Evaluate each step immediately (highest accuracy, highest cost)
@@ -21,6 +22,11 @@ import {
 } from '../schemas/evaluation-schemas';
 import { getLLMProvider, LLMProvider } from '../../../shared/services/llm-provider';
 import { isClaudeCliEnabled } from '../../../shared/config/llm-config';
+import {
+  getLangfuseService,
+  getCurrentTraceContext,
+  scoreSemanticEvaluation,
+} from '../../../shared/services';
 
 // =============================================================================
 // Types
@@ -93,6 +99,7 @@ export class SemanticEvaluator {
 
   /**
    * Evaluate a single conversation step
+   * Includes Langfuse span tracking for observability
    */
   async evaluateStep(context: EvaluationContext): Promise<SemanticEvaluation> {
     const startTime = Date.now();
@@ -105,10 +112,40 @@ export class SemanticEvaluator {
       }
     }
 
+    // Get Langfuse context and start span tracking
+    const langfuse = getLangfuseService();
+    const traceContext = getCurrentTraceContext();
+    let span: any = null;
+
+    if (traceContext && await langfuse.ensureInitialized()) {
+      try {
+        span = await langfuse.startSpan({
+          name: `semantic-eval-${context.stepId}`,
+          traceId: traceContext.traceId,
+          parentObservationId: traceContext.parentObservationId,
+          input: {
+            stepId: context.stepId,
+            userMessage: context.userMessage.substring(0, 200),
+            assistantResponse: context.assistantResponse.substring(0, 200),
+            expectedBehaviors: context.expectedBehaviors.slice(0, 5),
+          },
+          metadata: {
+            type: 'semantic-evaluation',
+            mode: this.evaluatorConfig.mode,
+            cacheEnabled: this.evaluatorConfig.cacheEnabled,
+          },
+        });
+      } catch (e: any) {
+        // Ignore Langfuse errors
+      }
+    }
+
     // Check if LLM is available
     const status = await this.llmProvider.checkAvailability();
     if (!status.available || !this.evaluatorConfig.enabled) {
-      return this.fallbackEvaluation(context, startTime);
+      const evaluation = this.fallbackEvaluation(context, startTime);
+      await this.endEvaluationSpan(span, evaluation, traceContext);
+      return evaluation;
     }
 
     try {
@@ -120,11 +157,15 @@ export class SemanticEvaluator {
         maxTokens: 2048,
         temperature: 0.1, // Low for consistent evaluation
         timeout: this.evaluatorConfig.timeout,
+        purpose: 'semantic-evaluation',
+        metadata: { stepId: context.stepId },
       });
 
       if (!response.success) {
         console.error('[SemanticEvaluator] LLM call failed:', response.error);
-        return this.fallbackEvaluation(context, startTime);
+        const evaluation = this.fallbackEvaluation(context, startTime);
+        await this.endEvaluationSpan(span, evaluation, traceContext);
+        return evaluation;
       }
 
       const responseText = response.content || '';
@@ -135,11 +176,59 @@ export class SemanticEvaluator {
         this.cacheEvaluation(context, evaluation);
       }
 
+      await this.endEvaluationSpan(span, evaluation, traceContext);
       return evaluation;
 
     } catch (error) {
       console.error('[SemanticEvaluator] Evaluation failed:', error);
-      return this.fallbackEvaluation(context, startTime);
+      const evaluation = this.fallbackEvaluation(context, startTime);
+      await this.endEvaluationSpan(span, evaluation, traceContext);
+      return evaluation;
+    }
+  }
+
+  /**
+   * End evaluation span and submit score
+   */
+  private async endEvaluationSpan(
+    span: any,
+    evaluation: SemanticEvaluation,
+    traceContext: any
+  ): Promise<void> {
+    if (!span) return;
+
+    const langfuse = getLangfuseService();
+
+    try {
+      langfuse.endSpan(span.id, {
+        output: {
+          passed: evaluation.validation.passed,
+          confidence: evaluation.validation.confidence,
+          matchedExpectations: evaluation.validation.matchedExpectations.length,
+          unmatchedExpectations: evaluation.validation.unmatchedExpectations.length,
+          isFallback: evaluation.isFallback,
+        },
+        level: evaluation.validation.passed ? 'DEFAULT' : 'WARNING',
+        statusMessage: evaluation.validation.reasoning?.substring(0, 200),
+      });
+    } catch (e: any) {
+      // Ignore
+    }
+
+    // Submit semantic confidence score
+    if (traceContext) {
+      try {
+        await scoreSemanticEvaluation(traceContext.traceId, {
+          passed: evaluation.validation.passed,
+          confidence: evaluation.validation.confidence,
+          reasoning: evaluation.validation.reasoning,
+          matchedExpectations: evaluation.validation.matchedExpectations,
+          unmatchedExpectations: evaluation.validation.unmatchedExpectations,
+          isFallback: evaluation.isFallback,
+        }, span.id);
+      } catch (e: any) {
+        // Ignore scoring errors
+      }
     }
   }
 

@@ -304,7 +304,7 @@ const goalTestCasesSlice = createSlice({
       if (action.payload === null) {
         state.selectedTestCase = null;
       } else {
-        const testCase = state.testCases.find(tc => tc.id === action.payload || tc.caseId === action.payload);
+        const testCase = state.testCases.find(tc => String(tc.id) === action.payload || tc.caseId === action.payload);
         state.selectedTestCase = testCase || null;
       }
     },

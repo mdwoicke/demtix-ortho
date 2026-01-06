@@ -59,7 +59,11 @@ export function AppointmentForm({
   // Convert reference data to select options
   const locationOptions = locations.map((loc) => ({
     value: loc.guid,
-    label: loc.name || 'Unknown Location',
+    label: loc.address?.city && loc.address?.state
+      ? `${loc.name} (${loc.address.city}, ${loc.address.state})`
+      : loc.address?.city
+      ? `${loc.name} (${loc.address.city})`
+      : (loc.name || 'Unknown Location'),
   }));
 
   const appointmentTypeOptions = appointmentTypes.map((type) => ({

@@ -46,6 +46,7 @@ export const getLocations = asyncHandler(async (req: Request, res: Response) => 
   }
 
   // Transform field names for frontend
+  // Note: Cloud9 API may return city as LocationCity or AddressCity depending on endpoint
   const transformedLocations = response.records.map((loc: Cloud9Location) => ({
     guid: loc.LocationGUID,
     name: loc.LocationName,
@@ -53,9 +54,9 @@ export const getLocations = asyncHandler(async (req: Request, res: Response) => 
     timeZone: loc.TimeZone,
     address: {
       street: loc.AddressStreet,
-      city: loc.AddressCity,
-      state: loc.AddressState,
-      postalCode: loc.AddressPostalCode,
+      city: loc.LocationCity || loc.AddressCity,
+      state: loc.LocationState || loc.AddressState,
+      postalCode: loc.LocationPostalCode || loc.AddressPostalCode,
     },
     phoneNumber: loc.PhoneNumber,
   }));

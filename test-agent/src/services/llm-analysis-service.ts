@@ -1,6 +1,7 @@
 /**
  * LLM Analysis Service
  * Uses Claude API or CLI to analyze test failures and generate fix recommendations
+ * Enhanced with Langfuse tracing for comprehensive observability
  */
 
 import * as fs from 'fs';
@@ -11,6 +12,11 @@ import { ApiCall, Database, GeneratedFix } from '../storage/database';
 import { getLLMProvider, LLMProvider } from '../../../shared/services/llm-provider';
 import { isClaudeCliEnabled } from '../../../shared/config/llm-config';
 import { TriggerService, type ABRecommendation } from './ab-testing';
+import {
+  getLangfuseService,
+  getCurrentTraceContext,
+  scoreAnalysisResult,
+} from '../../../shared/services';
 
 // ============================================================================
 // Types
@@ -189,15 +195,61 @@ export class LLMAnalysisService {
 
   /**
    * Analyze a test failure and generate fix recommendations
+   * Includes Langfuse span tracking for observability
    */
   async analyzeFailure(context: FailureContext): Promise<AnalysisResult> {
     console.log(`[Diagnosis:LLM] ========== analyzeFailure ==========`);
     console.log(`[Diagnosis:LLM] Test: ${context.testId}, Step: ${context.stepId}`);
 
+    const startTime = Date.now();
+
+    // Get Langfuse context and start span tracking
+    const langfuse = getLangfuseService();
+    const traceContext = getCurrentTraceContext();
+    let span: any = null;
+
+    if (traceContext && await langfuse.ensureInitialized()) {
+      try {
+        span = await langfuse.startSpan({
+          name: 'failure-analysis',
+          traceId: traceContext.traceId,
+          parentObservationId: traceContext.parentObservationId,
+          input: {
+            testId: context.testId,
+            testName: context.testName,
+            stepId: context.stepId,
+            stepDescription: context.stepDescription,
+            expectedPattern: context.expectedPattern?.substring(0, 200),
+            errorMessage: context.errorMessage,
+          },
+          metadata: {
+            type: 'analysis',
+            transcriptLength: context.transcript.length,
+            apiCallCount: context.apiCalls.length,
+            findingsCount: context.findings.length,
+          },
+        });
+      } catch (e: any) {
+        console.warn(`[LLMAnalysisService] Langfuse span start failed: ${e.message}`);
+      }
+    }
+
     const status = await this.llmProvider.checkAvailability();
     console.log(`[Diagnosis:LLM] LLM Provider status:`, status);
 
     if (!status.available) {
+      // End span with error if LLM not available
+      if (span) {
+        try {
+          langfuse.endSpan(span.id, {
+            output: { error: status.error },
+            level: 'ERROR',
+            statusMessage: status.error,
+          });
+        } catch (e: any) {
+          // Ignore
+        }
+      }
       console.error(`[Diagnosis:LLM] LLM not available, throwing error`);
       throw new Error(`LLM Analysis Service not available: ${status.error}`);
     }
@@ -213,6 +265,11 @@ export class LLMAnalysisService {
         maxTokens: config.llmAnalysis.maxTokens,
         temperature: config.llmAnalysis.temperature,
         timeout: config.llmAnalysis.timeout,
+        purpose: 'failure-analysis',
+        metadata: {
+          testId: context.testId,
+          stepId: context.stepId,
+        },
       });
 
       console.log(`[Diagnosis:LLM] LLM response:`, {
@@ -227,8 +284,41 @@ export class LLMAnalysisService {
         // Handle timeout or other errors
         if (response.error?.includes('timeout')) {
           console.warn(`[Diagnosis:LLM] Timed out after ${config.llmAnalysis.timeout}ms - falling back to rule-based analysis`);
-          return this.generateRuleBasedAnalysis(context);
+          const fallbackResult = this.generateRuleBasedAnalysis(context);
+
+          // End span with timeout warning
+          if (span) {
+            try {
+              langfuse.endSpan(span.id, {
+                output: {
+                  fallback: true,
+                  reason: 'timeout',
+                  rootCauseType: fallbackResult.rootCause.type,
+                },
+                level: 'WARNING',
+                statusMessage: 'Timed out - used rule-based fallback',
+              });
+            } catch (e: any) {
+              // Ignore
+            }
+          }
+
+          return fallbackResult;
         }
+
+        // End span with error
+        if (span) {
+          try {
+            langfuse.endSpan(span.id, {
+              output: { error: response.error },
+              level: 'ERROR',
+              statusMessage: response.error,
+            });
+          } catch (e: any) {
+            // Ignore
+          }
+        }
+
         throw new Error(response.error || 'LLM Analysis failed');
       }
 
@@ -243,13 +333,75 @@ export class LLMAnalysisService {
         fixTypes: result.fixes.map(f => f.type),
       });
 
+      // End Langfuse span with success and score the result
+      if (span) {
+        try {
+          const durationMs = Date.now() - startTime;
+          langfuse.endSpan(span.id, {
+            output: {
+              rootCauseType: result.rootCause.type,
+              rootCauseConfidence: result.rootCause.confidence,
+              fixCount: result.fixes.length,
+              fixTypes: result.fixes.map(f => f.type),
+              classification: result.classification?.issueLocation,
+              durationMs,
+            },
+          });
+
+          // Score the analysis result
+          await scoreAnalysisResult(
+            traceContext!.traceId,
+            {
+              fixes: result.fixes.map(f => ({ confidence: f.confidence })),
+              rootCauseType: result.rootCause.type,
+            },
+            span.id
+          );
+        } catch (e: any) {
+          console.warn(`[LLMAnalysisService] Langfuse span end/score failed: ${e.message}`);
+        }
+      }
+
       return result;
     } catch (error: any) {
       // Handle timeout specifically
       if (error.message?.includes('timeout')) {
         console.warn(`[Diagnosis:LLM] Caught timeout error - falling back to rule-based analysis`);
-        return this.generateRuleBasedAnalysis(context);
+        const fallbackResult = this.generateRuleBasedAnalysis(context);
+
+        // End span with timeout warning
+        if (span) {
+          try {
+            langfuse.endSpan(span.id, {
+              output: {
+                fallback: true,
+                reason: 'timeout-exception',
+                rootCauseType: fallbackResult.rootCause.type,
+              },
+              level: 'WARNING',
+              statusMessage: 'Caught timeout exception - used rule-based fallback',
+            });
+          } catch (e: any) {
+            // Ignore
+          }
+        }
+
+        return fallbackResult;
       }
+
+      // End span with error
+      if (span) {
+        try {
+          langfuse.endSpan(span.id, {
+            output: { error: error.message },
+            level: 'ERROR',
+            statusMessage: error.message,
+          });
+        } catch (e: any) {
+          // Ignore
+        }
+      }
+
       console.error(`[Diagnosis:LLM] LLM Analysis failed:`, error.message);
       throw error;
     }

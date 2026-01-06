@@ -3,6 +3,7 @@ import app from './app';
 import logger from './utils/logger';
 import { getDatabase } from './config/database';
 import { seedMasterAdmin } from './services/authService';
+import { initializeTestRunCleanup, stopPeriodicCleanup } from './services/testRunCleanupService';
 
 // Load environment variables
 dotenv.config();
@@ -51,11 +52,17 @@ const server = app.listen(Number(PORT), HOST, () => {
 ║                                               ║
 ╚═══════════════════════════════════════════════╝
   `);
+
+  // Initialize test run cleanup service (marks abandoned runs & starts periodic cleanup)
+  initializeTestRunCleanup();
 });
 
 // Graceful shutdown
 const gracefulShutdown = (signal: string) => {
   logger.info(`Received ${signal}, shutting down gracefully...`);
+
+  // Stop the test run cleanup service
+  stopPeriodicCleanup();
 
   server.close(() => {
     logger.info('HTTP server closed');

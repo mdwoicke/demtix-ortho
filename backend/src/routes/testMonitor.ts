@@ -43,6 +43,19 @@ router.post('/runs/:runId/pause', testMonitorController.pauseExecution);
 router.post('/runs/:runId/resume', testMonitorController.resumeExecution);
 
 // ============================================================================
+// CLEANUP ROUTES
+// ============================================================================
+
+// GET /api/test-monitor/cleanup/status - Get cleanup service status
+router.get('/cleanup/status', testMonitorController.getCleanupStatus);
+
+// POST /api/test-monitor/cleanup/stale - Manually trigger stale run cleanup
+router.post('/cleanup/stale', testMonitorController.triggerStaleCleanup);
+
+// POST /api/test-monitor/runs/:runId/abort - Mark a specific run as aborted
+router.post('/runs/:runId/abort', testMonitorController.abortTestRun);
+
+// ============================================================================
 // TEST RUNS ROUTES
 // ============================================================================
 
@@ -355,5 +368,77 @@ router.get('/v1-files/:fileKey', testMonitorController.getV1File);
 
 // POST /api/test-monitor/v1-files/:fileKey/validate - Validate V1 file content
 router.post('/v1-files/:fileKey/validate', testMonitorController.validateV1File);
+
+// ============================================================================
+// APP SETTINGS ROUTES
+// ============================================================================
+
+// GET /api/test-monitor/app-settings - Get all application settings
+router.get('/app-settings', testMonitorController.getAppSettings);
+
+// PUT /api/test-monitor/app-settings - Update application settings
+router.put('/app-settings', testMonitorController.updateAppSettings);
+
+// POST /api/test-monitor/app-settings/test-flowise - Test production Flowise connection
+router.post('/app-settings/test-flowise', testMonitorController.testProductionFlowiseConnection);
+
+// POST /api/test-monitor/app-settings/test-langfuse - Test Langfuse connection from settings
+router.post('/app-settings/test-langfuse', testMonitorController.testLangfuseFromSettings);
+
+// GET /api/test-monitor/app-settings/langfuse-config - Get Langfuse config for scripts/hooks
+router.get('/app-settings/langfuse-config', testMonitorController.getLangfuseConfig);
+
+// GET /api/test-monitor/app-settings/:key - Get specific setting
+router.get('/app-settings/:key', testMonitorController.getAppSetting);
+
+// ============================================================================
+// FLOWISE CONFIGURATION PROFILES ROUTES
+// ============================================================================
+
+// GET /api/test-monitor/flowise-configs/active - Get active (default) Flowise config
+router.get('/flowise-configs/active', testMonitorController.getActiveFlowiseConfig);
+
+// GET /api/test-monitor/flowise-configs - Get all Flowise configurations
+router.get('/flowise-configs', testMonitorController.getFlowiseConfigs);
+
+// POST /api/test-monitor/flowise-configs - Create new Flowise configuration
+router.post('/flowise-configs', testMonitorController.createFlowiseConfig);
+
+// PUT /api/test-monitor/flowise-configs/:id - Update Flowise configuration
+router.put('/flowise-configs/:id', testMonitorController.updateFlowiseConfig);
+
+// DELETE /api/test-monitor/flowise-configs/:id - Delete Flowise configuration
+router.delete('/flowise-configs/:id', testMonitorController.deleteFlowiseConfig);
+
+// POST /api/test-monitor/flowise-configs/:id/set-default - Set as default
+router.post('/flowise-configs/:id/set-default', testMonitorController.setFlowiseConfigDefault);
+
+// POST /api/test-monitor/flowise-configs/:id/test - Test connection
+router.post('/flowise-configs/:id/test', testMonitorController.testFlowiseConfig);
+
+// ============================================================================
+// LANGFUSE CONFIGURATION PROFILES ROUTES
+// ============================================================================
+
+// GET /api/test-monitor/langfuse-configs/active - Get active (default) Langfuse config
+router.get('/langfuse-configs/active', testMonitorController.getActiveLangfuseConfig);
+
+// GET /api/test-monitor/langfuse-configs - Get all Langfuse configurations
+router.get('/langfuse-configs', testMonitorController.getLangfuseConfigs);
+
+// POST /api/test-monitor/langfuse-configs - Create new Langfuse configuration
+router.post('/langfuse-configs', testMonitorController.createLangfuseConfig);
+
+// PUT /api/test-monitor/langfuse-configs/:id - Update Langfuse configuration
+router.put('/langfuse-configs/:id', testMonitorController.updateLangfuseConfig);
+
+// DELETE /api/test-monitor/langfuse-configs/:id - Delete Langfuse configuration
+router.delete('/langfuse-configs/:id', testMonitorController.deleteLangfuseConfig);
+
+// POST /api/test-monitor/langfuse-configs/:id/set-default - Set as default
+router.post('/langfuse-configs/:id/set-default', testMonitorController.setLangfuseConfigDefault);
+
+// POST /api/test-monitor/langfuse-configs/:id/test - Test connection
+router.post('/langfuse-configs/:id/test', testMonitorController.testLangfuseConfig);
 
 export default router;

@@ -4,6 +4,7 @@
  * Generates user responses based on agent intent and persona inventory.
  * Uses hybrid approach: templates by default when useLlm=false, LLM when useLlm=true.
  * LLM usage is controlled independently of persona verbosity level.
+ * Enhanced with Langfuse tracing for comprehensive observability.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -11,6 +12,10 @@ import type { UserPersona, DataInventory, ChildData } from '../tests/types/perso
 import type { AgentIntent, IntentDetectionResult } from '../tests/types/intent';
 import type { CollectableField } from '../tests/types/goals';
 import type { ConversationTurn } from '../tests/test-case';
+import {
+  getLangfuseService,
+  getCurrentTraceContext,
+} from '../../../shared/services';
 
 /**
  * Configuration for the response generator
@@ -414,6 +419,7 @@ export class ResponseGenerator {
 
   /**
    * Generate response using LLM
+   * Includes Langfuse generation tracking for observability
    */
   private async generateLlmResponse(
     intent: IntentDetectionResult,
@@ -463,6 +469,43 @@ IMPORTANT: When discussing scheduling preferences, NEVER request specific days o
 
 Return ONLY the response text, nothing else.`;
 
+    // Get Langfuse context and start generation tracking
+    const langfuse = getLangfuseService();
+    const traceContext = getCurrentTraceContext();
+    let generation: any = null;
+    const startTime = Date.now();
+
+    if (traceContext && await langfuse.ensureInitialized()) {
+      try {
+        generation = await langfuse.startGeneration({
+          name: 'response-generator',
+          traceId: traceContext.traceId,
+          parentObservationId: traceContext.parentObservationId,
+          model: this.config.model,
+          modelParameters: {
+            temperature: this.config.temperature,
+            maxTokens: this.config.maxTokens,
+          },
+          input: {
+            intent: intent.primaryIntent,
+            confidence: intent.confidence,
+            persona: this.persona.name,
+            verbosity: traits.verbosity,
+          },
+          metadata: {
+            provider: 'anthropic',
+            purpose: 'response-generation',
+            personaName: this.persona.name,
+            intentType: intent.primaryIntent,
+            verbosityLevel: traits.verbosity,
+            childIndex: this.context.currentChildIndex,
+          },
+        });
+      } catch (e: any) {
+        console.warn(`[ResponseGenerator] Langfuse generation start failed: ${e.message}`);
+      }
+    }
+
     try {
       const response = await this.client.messages.create({
         model: this.config.model,
@@ -473,13 +516,57 @@ Return ONLY the response text, nothing else.`;
 
       const textContent = response.content.find(c => c.type === 'text');
       if (textContent && textContent.type === 'text') {
-        return textContent.text.trim();
+        const result = textContent.text.trim();
+
+        // End Langfuse generation with success
+        if (generation) {
+          try {
+            langfuse.endGeneration(generation.id, {
+              output: { response: result.substring(0, 500) },
+              usage: {
+                input: response.usage?.input_tokens || 0,
+                output: response.usage?.output_tokens || 0,
+                total: (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0),
+              },
+              level: 'DEFAULT',
+            });
+          } catch (e: any) {
+            console.warn(`[ResponseGenerator] Langfuse generation end failed: ${e.message}`);
+          }
+        }
+
+        return result;
       }
-    } catch (error) {
+    } catch (error: any) {
       console.warn('[ResponseGenerator] LLM generation failed:', error);
+
+      // End Langfuse generation with error
+      if (generation) {
+        try {
+          langfuse.endGeneration(generation.id, {
+            output: { error: error.message },
+            level: 'ERROR',
+            statusMessage: error.message,
+          });
+        } catch (e: any) {
+          console.warn(`[ResponseGenerator] Langfuse generation error end failed: ${e.message}`);
+        }
+      }
     }
 
-    // Fall back to template
+    // Fall back to template (also end generation if still open)
+    if (generation) {
+      try {
+        langfuse.endGeneration(generation.id, {
+          output: { fallback: 'template' },
+          level: 'WARNING',
+          statusMessage: 'Fell back to template response',
+        });
+      } catch (e: any) {
+        // Ignore
+      }
+    }
+
     return this.generateTemplateResponse(intent.primaryIntent, data);
   }
 

@@ -3,22 +3,35 @@
  * Top navigation bar with logo, environment indicator, theme toggle, user info, and menu toggle
  */
 
+import { useState } from 'react';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
 import { selectEnvironment, toggleEnvironment, selectUser, logout } from '../../store/slices/authSlice';
 import { toggleSidebar } from '../../store/slices/uiSlice';
 import { useTheme } from '../../contexts/ThemeContext';
+import { ConfirmationModal } from '../ui/ConfirmationModal';
 
 export function Navbar() {
   const dispatch = useAppDispatch();
   const environment = useAppSelector(selectEnvironment);
   const user = useAppSelector(selectUser);
   const { theme, toggleTheme } = useTheme();
+  const [showProductionWarning, setShowProductionWarning] = useState(false);
 
   const handleToggleSidebar = () => {
     dispatch(toggleSidebar());
   };
 
   const handleToggleEnvironment = () => {
+    // Show warning when switching TO production
+    if (environment === 'sandbox') {
+      setShowProductionWarning(true);
+    } else {
+      // Switching to sandbox doesn't need confirmation
+      dispatch(toggleEnvironment());
+    }
+  };
+
+  const handleConfirmProduction = () => {
     dispatch(toggleEnvironment());
   };
 
@@ -157,6 +170,43 @@ export function Navbar() {
           )}
         </div>
       </div>
+
+      {/* Production Environment Warning Modal */}
+      <ConfirmationModal
+        isOpen={showProductionWarning}
+        onClose={() => setShowProductionWarning(false)}
+        onConfirm={handleConfirmProduction}
+        title="Switch to Production?"
+        variant="warning"
+        confirmText="Yes, Switch to Production"
+        cancelText="Stay in Sandbox"
+        message={
+          <div className="space-y-3 text-left">
+            <p className="font-medium text-gray-800 dark:text-gray-200">
+              You are about to switch to the <span className="text-green-600 font-semibold">Production</span> environment.
+            </p>
+            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md p-3">
+              <ul className="text-sm text-amber-800 dark:text-amber-200 space-y-1">
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-500 mt-0.5">•</span>
+                  All API calls will affect <strong>real patient data</strong>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-500 mt-0.5">•</span>
+                  Changes cannot be easily reversed
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-500 mt-0.5">•</span>
+                  Ensure you have proper authorization
+                </li>
+              </ul>
+            </div>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Are you sure you want to continue?
+            </p>
+          </div>
+        }
+      />
     </nav>
   );
 }

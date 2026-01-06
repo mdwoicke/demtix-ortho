@@ -1,11 +1,18 @@
 /**
  * Flowise API Client
  * Handles communication with the Flowise prediction API
+ * Enhanced with Langfuse tracing for comprehensive observability
  */
 
 import axios, { AxiosInstance } from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config/config';
+import { getFlowiseEndpoint } from '../services/settings-service';
+import {
+  getLangfuseService,
+  getCurrentTraceContext,
+  scoreError,
+} from '../../../shared/services';
 
 export interface ToolCall {
   toolName: string;
@@ -33,21 +40,32 @@ export class FlowiseClient {
   private client: AxiosInstance;
   private sessionId: string;
   private endpoint: string;
+  private apiKey?: string;
 
   /**
    * Create a new FlowiseClient
    * @param sessionId - Optional session ID (generates UUID if not provided)
    * @param endpoint - Optional endpoint URL override (uses config default if not provided)
+   * @param apiKey - Optional API key for authentication
    */
-  constructor(sessionId?: string, endpoint?: string) {
+  constructor(sessionId?: string, endpoint?: string, apiKey?: string) {
     this.sessionId = sessionId || uuidv4();
     this.endpoint = endpoint || config.flowise.endpoint;
+    this.apiKey = apiKey;
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    // Add Authorization header if API key is provided
+    if (this.apiKey) {
+      headers['Authorization'] = `Bearer ${this.apiKey}`;
+    }
+
     this.client = axios.create({
       baseURL: this.endpoint,
       timeout: config.flowise.timeout,
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
     });
   }
 
@@ -61,19 +79,36 @@ export class FlowiseClient {
   /**
    * Create a FlowiseClient for a specific sandbox endpoint
    */
-  static forSandbox(endpoint: string, sessionId?: string): FlowiseClient {
-    return new FlowiseClient(sessionId, endpoint);
+  static forSandbox(endpoint: string, sessionId?: string, apiKey?: string): FlowiseClient {
+    return new FlowiseClient(sessionId, endpoint, apiKey);
   }
 
   /**
-   * Create a FlowiseClient using the default production endpoint
+   * Create a FlowiseClient using the default production endpoint from hardcoded config
+   * @deprecated Use forActiveConfig() instead to use settings from the app
    */
   static forProduction(sessionId?: string): FlowiseClient {
     return new FlowiseClient(sessionId, config.flowise.endpoint);
   }
 
   /**
+   * Create a FlowiseClient using the active configuration from app settings
+   * Falls back to hardcoded config if settings unavailable
+   */
+  static async forActiveConfig(sessionId?: string): Promise<FlowiseClient> {
+    try {
+      const settings = await getFlowiseEndpoint();
+      console.log(`[FlowiseClient] Using active config: ${settings.url.substring(0, 60)}...`);
+      return new FlowiseClient(sessionId, settings.url, settings.apiKey);
+    } catch (error: any) {
+      console.warn(`[FlowiseClient] Failed to get active config, using fallback: ${error.message}`);
+      return new FlowiseClient(sessionId, config.flowise.endpoint);
+    }
+  }
+
+  /**
    * Send a message to the Flowise API
+   * Includes Langfuse span tracking for observability
    */
   async sendMessage(question: string): Promise<FlowiseResponse> {
     const startTime = Date.now();
@@ -85,9 +120,37 @@ export class FlowiseClient {
       },
     };
 
+    // Get Langfuse context and start span tracking
+    const langfuse = getLangfuseService();
+    const traceContext = getCurrentTraceContext();
+    let span: any = null;
+
+    if (traceContext && await langfuse.ensureInitialized()) {
+      try {
+        span = await langfuse.startSpan({
+          name: 'flowise-prediction',
+          traceId: traceContext.traceId,
+          parentObservationId: traceContext.parentObservationId,
+          input: {
+            question: question.substring(0, 500), // Truncate for storage
+            sessionId: this.sessionId,
+          },
+          metadata: {
+            type: 'external-llm',
+            provider: 'flowise',
+            endpoint: this.endpoint.substring(0, 60),
+          },
+        });
+      } catch (e: any) {
+        console.warn(`[FlowiseClient] Langfuse span start failed: ${e.message}`);
+      }
+    }
+
     let lastError: Error | null = null;
+    let attemptCount = 0;
 
     for (let attempt = 1; attempt <= config.flowise.retryAttempts; attempt++) {
+      attemptCount = attempt;
       try {
         const response = await this.client.post('', payload);
         const responseTime = Date.now() - startTime;
@@ -97,6 +160,47 @@ export class FlowiseClient {
 
         // Extract tool calls from the response
         const toolCalls = this.extractToolCalls(response.data);
+
+        // Log tool calls as child spans
+        if (span && toolCalls.length > 0) {
+          for (const tc of toolCalls) {
+            try {
+              const toolSpan = await langfuse.startSpan({
+                name: `tool-${tc.toolName}`,
+                traceId: traceContext!.traceId,
+                parentObservationId: span.id,
+                input: tc.input,
+                metadata: {
+                  type: 'flowise-tool-call',
+                  toolName: tc.toolName,
+                },
+              });
+              if (toolSpan) {
+                langfuse.endSpan(toolSpan.id, {
+                  output: tc.output,
+                  statusMessage: tc.status,
+                });
+              }
+            } catch (e: any) {
+              // Ignore tool span errors
+            }
+          }
+        }
+
+        // End Langfuse span with success
+        if (span) {
+          try {
+            langfuse.endSpan(span.id, {
+              output: {
+                text: text.substring(0, 500),
+                toolCallCount: toolCalls.length,
+                responseTime,
+              },
+            });
+          } catch (e: any) {
+            console.warn(`[FlowiseClient] Langfuse span end failed: ${e.message}`);
+          }
+        }
 
         return {
           text,
@@ -111,6 +215,33 @@ export class FlowiseClient {
         if (attempt < config.flowise.retryAttempts) {
           await this.delay(config.flowise.retryDelay * attempt);
         }
+      }
+    }
+
+    // End Langfuse span with error
+    if (span) {
+      try {
+        langfuse.endSpan(span.id, {
+          output: { error: lastError?.message },
+          level: 'ERROR',
+          statusMessage: lastError?.message,
+        });
+      } catch (e: any) {
+        console.warn(`[FlowiseClient] Langfuse span error end failed: ${e.message}`);
+      }
+    }
+
+    // Score the error
+    if (traceContext) {
+      try {
+        await scoreError(
+          traceContext.traceId,
+          'api_error',
+          lastError?.message || 'Unknown error',
+          span?.id
+        );
+      } catch (e: any) {
+        // Ignore scoring errors
       }
     }
 

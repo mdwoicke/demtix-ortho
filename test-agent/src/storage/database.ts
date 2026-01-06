@@ -1331,6 +1331,129 @@ export class Database {
   }
 
   /**
+   * Mark all currently running test runs as aborted (for server restart cleanup)
+   * This should be called on server startup to clean up any runs that were interrupted
+   */
+  markAbandonedRunsOnStartup(): { count: number; runIds: string[] } {
+    const db = this.getDb();
+
+    // First, get the IDs of running tests for logging
+    const runningRuns = db.prepare(`
+      SELECT run_id, started_at FROM test_runs WHERE status = 'running'
+    `).all() as Array<{ run_id: string; started_at: string }>;
+
+    if (runningRuns.length === 0) {
+      return { count: 0, runIds: [] };
+    }
+
+    const runIds = runningRuns.map(r => r.run_id);
+    const now = new Date().toISOString();
+
+    // Update all running runs to aborted
+    const result = db.prepare(`
+      UPDATE test_runs
+      SET completed_at = ?,
+          status = 'aborted',
+          summary = json_set(
+            COALESCE(summary, '{}'),
+            '$.aborted', true,
+            '$.abortReason', 'Server restart - process terminated unexpectedly',
+            '$.abortedAt', ?
+          )
+      WHERE status = 'running'
+    `).run(now, now);
+
+    return { count: result.changes, runIds };
+  }
+
+  /**
+   * Get all currently running test runs with their age
+   */
+  getRunningTestRuns(): Array<{
+    runId: string;
+    startedAt: string;
+    ageMinutes: number;
+    totalTests: number;
+    passed: number;
+    failed: number;
+  }> {
+    const db = this.getDb();
+    const now = Date.now();
+
+    const runs = db.prepare(`
+      SELECT run_id, started_at, total_tests, passed, failed
+      FROM test_runs
+      WHERE status = 'running'
+      ORDER BY started_at DESC
+    `).all() as Array<{
+      run_id: string;
+      started_at: string;
+      total_tests: number;
+      passed: number;
+      failed: number;
+    }>;
+
+    return runs.map(r => ({
+      runId: r.run_id,
+      startedAt: r.started_at,
+      ageMinutes: Math.round((now - new Date(r.started_at).getTime()) / 60000),
+      totalTests: r.total_tests,
+      passed: r.passed,
+      failed: r.failed,
+    }));
+  }
+
+  /**
+   * Mark a specific run as abandoned with a custom reason
+   */
+  markRunAsAbandoned(runId: string, reason: string): boolean {
+    const db = this.getDb();
+    const now = new Date().toISOString();
+
+    // Get current stats for the run
+    const stats = db.prepare(`
+      SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'passed' THEN 1 ELSE 0 END) as passed,
+        SUM(CASE WHEN status IN ('failed', 'error') THEN 1 ELSE 0 END) as failed,
+        SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) as skipped
+      FROM test_results WHERE run_id = ?
+    `).get(runId) as { total: number; passed: number; failed: number; skipped: number } | undefined;
+
+    const summary = {
+      totalTests: stats?.total || 0,
+      passed: stats?.passed || 0,
+      failed: stats?.failed || 0,
+      skipped: stats?.skipped || 0,
+      aborted: true,
+      abortReason: reason,
+      abortedAt: now,
+    };
+
+    const result = db.prepare(`
+      UPDATE test_runs
+      SET completed_at = ?,
+          status = 'aborted',
+          total_tests = ?,
+          passed = ?,
+          failed = ?,
+          skipped = ?,
+          summary = ?
+      WHERE run_id = ? AND status = 'running'
+    `).run(
+      now,
+      summary.totalTests,
+      summary.passed,
+      summary.failed,
+      summary.skipped,
+      JSON.stringify(summary),
+      runId
+    );
+
+    return result.changes > 0;
+  }
+
+  /**
    * Save a test result
    */
   saveTestResult(result: TestResult): number {

@@ -144,10 +144,10 @@ export class SandboxComparisonService {
     const testResults: TestComparisonResult[] = [];
 
     try {
-      // Run production tests
+      // Run production tests using active config from settings
       if (request.runProduction) {
         console.log(`[ComparisonService] ${comparisonId} - Running production tests...`);
-        const prodClient = FlowiseClient.forProduction();
+        const prodClient = await FlowiseClient.forActiveConfig();
         const prodRunner = createGoalTestRunner(prodClient, this.db);
 
         for (let i = 0; i < testCases.length; i++) {
@@ -287,10 +287,10 @@ export class SandboxComparisonService {
     const sandboxBResults: Record<string, GoalTestResult> = {};
 
     try {
-      // Run production tests
+      // Run production tests using active config from settings
       if (request.runProduction) {
         console.log('[ComparisonService] Running production tests...');
-        const prodClient = FlowiseClient.forProduction();
+        const prodClient = await FlowiseClient.forActiveConfig();
         const prodRunner = createGoalTestRunner(prodClient, this.db);
 
         for (let i = 0; i < testCases.length; i++) {

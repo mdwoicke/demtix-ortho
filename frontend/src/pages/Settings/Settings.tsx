@@ -5,8 +5,9 @@
 
 import { useState } from 'react';
 import { PageHeader } from '../../components/layout';
-import { Card, Button } from '../../components/ui';
+import { Card, Button, ConfirmationModal } from '../../components/ui';
 import { CopyToPostmanButton } from '../../components/features/postman/CopyToPostmanButton';
+import { FlowiseConfigManager, LangfuseConfigManager } from '../../components/features/settings';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
 import { selectEnvironment, toggleEnvironment } from '../../store/slices/authSlice';
 import { refreshAllCaches } from '../../store/slices/referenceSlice';
@@ -17,11 +18,22 @@ export function Settings() {
   const environment = useAppSelector(selectEnvironment);
   const toast = useToast();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showProductionWarning, setShowProductionWarning] = useState(false);
 
   const handleToggleEnvironment = () => {
+    // Show warning when switching TO production
+    if (environment === 'sandbox') {
+      setShowProductionWarning(true);
+    } else {
+      // Switching to sandbox doesn't need confirmation
+      dispatch(toggleEnvironment());
+      toast.showSuccess('Switched to sandbox environment');
+    }
+  };
+
+  const handleConfirmProduction = () => {
     dispatch(toggleEnvironment());
-    const newEnv = environment === 'sandbox' ? 'production' : 'sandbox';
-    toast.showSuccess(`Switched to ${newEnv} environment`);
+    toast.showSuccess('Switched to production environment');
   };
 
   const handleRefreshCaches = async () => {
@@ -81,6 +93,16 @@ export function Settings() {
               </Button>
             </div>
           </div>
+        </Card>
+
+        {/* Flowise Configurations */}
+        <Card>
+          <FlowiseConfigManager />
+        </Card>
+
+        {/* Langfuse Configurations */}
+        <Card>
+          <LangfuseConfigManager />
         </Card>
 
         {/* Cache Management */}
@@ -176,6 +198,43 @@ export function Settings() {
           </div>
         </Card>
       </div>
+
+      {/* Production Environment Warning Modal */}
+      <ConfirmationModal
+        isOpen={showProductionWarning}
+        onClose={() => setShowProductionWarning(false)}
+        onConfirm={handleConfirmProduction}
+        title="Switch to Production?"
+        variant="warning"
+        confirmText="Yes, Switch to Production"
+        cancelText="Stay in Sandbox"
+        message={
+          <div className="space-y-3 text-left">
+            <p className="font-medium text-gray-800 dark:text-gray-200">
+              You are about to switch to the <span className="text-green-600 font-semibold">Production</span> environment.
+            </p>
+            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md p-3">
+              <ul className="text-sm text-amber-800 dark:text-amber-200 space-y-1">
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-500 mt-0.5">•</span>
+                  All API calls will affect <strong>real patient data</strong>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-500 mt-0.5">•</span>
+                  Changes cannot be easily reversed
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-500 mt-0.5">•</span>
+                  Ensure you have proper authorization
+                </li>
+              </ul>
+            </div>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Are you sure you want to continue?
+            </p>
+          </div>
+        }
+      />
     </div>
   );
 }

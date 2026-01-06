@@ -1,18 +1,61 @@
 /**
  * Langfuse Debug Script
  * Connects to Langfuse to analyze chord_patient tool execution logs
+ *
+ * Reads Langfuse credentials from app_settings in the database.
+ * Falls back to defaults if database is not available.
  */
 
 const https = require('https');
+const path = require('path');
 
-const LANGFUSE_CONFIG = {
+// Database path for app settings
+const TEST_AGENT_DB_PATH = path.resolve(__dirname, 'test-agent/data/test-results.db');
+
+// Default Langfuse configuration (fallback)
+const DEFAULT_LANGFUSE_CONFIG = {
     host: 'langfuse-6x3cj-u15194.vm.elestio.app',
     publicKey: 'pk-lf-d8ac7be3-a04b-4720-b95f-b96fa98874ed',
-    secretKey: 'sk-lf-04345fa3-887d-4fc5-a386-3d12142202c7'
+    secretKey: ''
 };
 
-// Base64 encode credentials for Basic Auth
-const authString = Buffer.from(`${LANGFUSE_CONFIG.publicKey}:${LANGFUSE_CONFIG.secretKey}`).toString('base64');
+// Global config - will be loaded from database
+let LANGFUSE_CONFIG = { ...DEFAULT_LANGFUSE_CONFIG };
+let authString = '';
+
+/**
+ * Load Langfuse configuration from database
+ */
+function loadLangfuseConfig() {
+    try {
+        const BetterSqlite3 = require(path.resolve(__dirname, 'backend/node_modules/better-sqlite3'));
+        const db = new BetterSqlite3(TEST_AGENT_DB_PATH, { readonly: true });
+
+        const hostRow = db.prepare(`SELECT setting_value FROM app_settings WHERE setting_key = 'langfuse_host'`).get();
+        const publicKeyRow = db.prepare(`SELECT setting_value FROM app_settings WHERE setting_key = 'langfuse_public_key'`).get();
+        const secretKeyRow = db.prepare(`SELECT setting_value FROM app_settings WHERE setting_key = 'langfuse_secret_key'`).get();
+
+        db.close();
+
+        LANGFUSE_CONFIG = {
+            host: (hostRow?.setting_value || DEFAULT_LANGFUSE_CONFIG.host).replace(/^https?:\/\//, ''),
+            publicKey: publicKeyRow?.setting_value || DEFAULT_LANGFUSE_CONFIG.publicKey,
+            secretKey: secretKeyRow?.setting_value || DEFAULT_LANGFUSE_CONFIG.secretKey
+        };
+
+        console.log(`Loaded Langfuse config from database: ${LANGFUSE_CONFIG.host}`);
+    } catch (err) {
+        console.log('Could not load Langfuse config from database, using defaults:', err.message);
+        LANGFUSE_CONFIG = { ...DEFAULT_LANGFUSE_CONFIG };
+    }
+
+    // Base64 encode credentials for Basic Auth
+    authString = Buffer.from(`${LANGFUSE_CONFIG.publicKey}:${LANGFUSE_CONFIG.secretKey}`).toString('base64');
+
+    if (!LANGFUSE_CONFIG.secretKey) {
+        console.log('⚠️  Warning: Langfuse secret key not configured. Set it in Settings > Langfuse Configuration.');
+    }
+}
 
 function makeRequest(path, method = 'GET') {
     return new Promise((resolve, reject) => {
@@ -346,6 +389,9 @@ async function analyzeRecentFailure(testId) {
 }
 
 async function main() {
+    // Load Langfuse configuration from database
+    loadLangfuseConfig();
+
     // Check for command line arguments
     const args = process.argv.slice(2);
     if (args[0] === 'analyze' && args[1]) {

@@ -146,6 +146,44 @@ function getTestAgentDbWritable(): BetterSqlite3.Database {
     CREATE INDEX IF NOT EXISTS idx_sandbox_history_sandbox ON ab_sandbox_file_history(sandbox_id);
     CREATE INDEX IF NOT EXISTS idx_sandbox_history_file ON ab_sandbox_file_history(file_key);
     CREATE INDEX IF NOT EXISTS idx_comparison_runs_status ON ab_sandbox_comparison_runs(status);
+
+    -- App Settings: Global application settings (key-value store)
+    CREATE TABLE IF NOT EXISTS app_settings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      setting_key TEXT UNIQUE NOT NULL,
+      setting_value TEXT,
+      setting_type TEXT DEFAULT 'string',
+      description TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Flowise Configuration Profiles: Multiple Flowise endpoint configurations
+    CREATE TABLE IF NOT EXISTS flowise_configs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      url TEXT NOT NULL,
+      api_key TEXT,
+      is_default INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Langfuse Configuration Profiles: Multiple Langfuse instance configurations
+    CREATE TABLE IF NOT EXISTS langfuse_configs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      host TEXT NOT NULL,
+      public_key TEXT NOT NULL,
+      secret_key TEXT,
+      is_default INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Indexes for config tables
+    CREATE INDEX IF NOT EXISTS idx_flowise_configs_default ON flowise_configs(is_default);
+    CREATE INDEX IF NOT EXISTS idx_langfuse_configs_default ON langfuse_configs(is_default);
   `);
 
   // Add langfuse columns if they don't exist (for existing tables)
@@ -5476,6 +5514,1417 @@ export async function syncV1FilesToNodered(_req: Request, res: Response, next: N
       success: result.success,
       data: result.results,
     });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ============================================================================
+// APP SETTINGS API ENDPOINTS
+// ============================================================================
+
+/**
+ * Default app settings configuration
+ */
+const DEFAULT_APP_SETTINGS: Record<string, { value: string; type: string; description: string }> = {
+  flowise_production_url: {
+    value: 'https://app.c1elly.ai/api/v1/prediction/5f1fa57c-e6fd-463c-ac6e-c73fd5fb578b',
+    type: 'url',
+    description: 'Production Flowise endpoint URL for e2e testing',
+  },
+  flowise_production_api_key: {
+    value: '',
+    type: 'secret',
+    description: 'Production Flowise API key (optional)',
+  },
+  langfuse_host: {
+    value: 'https://langfuse-6x3cj-u15194.vm.elestio.app',
+    type: 'url',
+    description: 'Langfuse host URL for prompt management and tracing',
+  },
+  langfuse_public_key: {
+    value: 'pk-lf-d8ac7be3-a04b-4720-b95f-b96fa98874ed',
+    type: 'string',
+    description: 'Langfuse public key for API authentication',
+  },
+  langfuse_secret_key: {
+    value: '',
+    type: 'secret',
+    description: 'Langfuse secret key for API authentication',
+  },
+};
+
+/**
+ * GET /api/test-monitor/app-settings
+ * Get all application settings
+ */
+export async function getAppSettings(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    db = getTestAgentDbWritable();
+    const now = new Date().toISOString();
+
+    // Ensure default settings exist
+    for (const [key, config] of Object.entries(DEFAULT_APP_SETTINGS)) {
+      const existing = db.prepare('SELECT 1 FROM app_settings WHERE setting_key = ?').get(key);
+      if (!existing) {
+        db.prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, setting_type, description, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(key, config.value, config.type, config.description, now, now);
+      }
+    }
+
+    // Fetch all settings
+    const settings = db.prepare(`
+      SELECT setting_key, setting_value, setting_type, description, updated_at
+      FROM app_settings
+      ORDER BY setting_key
+    `).all() as any[];
+
+    // Convert to object format with camelCase keys
+    const settingsMap: Record<string, any> = {};
+    for (const s of settings) {
+      // Convert snake_case to camelCase for frontend
+      const camelKey = s.setting_key.replace(/_([a-z])/g, (_: string, letter: string) => letter.toUpperCase());
+      settingsMap[camelKey] = {
+        value: s.setting_type === 'secret' && s.setting_value ? '********' : s.setting_value,
+        hasValue: !!s.setting_value,
+        type: s.setting_type,
+        description: s.description,
+        updatedAt: s.updated_at,
+      };
+    }
+
+    res.json({
+      success: true,
+      data: settingsMap,
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * PUT /api/test-monitor/app-settings
+ * Update application settings
+ */
+export async function updateAppSettings(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const updates = req.body;
+
+    if (!updates || typeof updates !== 'object') {
+      res.status(400).json({
+        success: false,
+        error: 'Request body must be an object with settings to update',
+      });
+      return;
+    }
+
+    db = getTestAgentDbWritable();
+    const now = new Date().toISOString();
+
+    const updatedKeys: string[] = [];
+
+    for (const [camelKey, value] of Object.entries(updates)) {
+      // Convert camelCase to snake_case for database
+      const snakeKey = camelKey.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+
+      // Skip if value is masked placeholder
+      if (value === '********') continue;
+
+      // Check if this is a known setting
+      const existing = db.prepare('SELECT setting_type FROM app_settings WHERE setting_key = ?').get(snakeKey) as any;
+
+      if (existing) {
+        // Update existing setting
+        db.prepare(`
+          UPDATE app_settings
+          SET setting_value = ?, updated_at = ?
+          WHERE setting_key = ?
+        `).run(value as string, now, snakeKey);
+        updatedKeys.push(camelKey);
+      } else if (DEFAULT_APP_SETTINGS[snakeKey]) {
+        // Insert default setting with new value
+        const config = DEFAULT_APP_SETTINGS[snakeKey];
+        db.prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, setting_type, description, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(snakeKey, value as string, config.type, config.description, now, now);
+        updatedKeys.push(camelKey);
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        updatedKeys,
+        message: `Updated ${updatedKeys.length} setting(s)`,
+      },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * GET /api/test-monitor/app-settings/:key
+ * Get a specific application setting by key
+ */
+export async function getAppSetting(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { key } = req.params;
+    // Convert camelCase to snake_case
+    const snakeKey = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+
+    db = getTestAgentDbWritable();
+
+    const setting = db.prepare(`
+      SELECT setting_key, setting_value, setting_type, description, updated_at
+      FROM app_settings
+      WHERE setting_key = ?
+    `).get(snakeKey) as any;
+
+    if (!setting) {
+      // Check if it's a default setting that hasn't been created yet
+      if (DEFAULT_APP_SETTINGS[snakeKey]) {
+        const config = DEFAULT_APP_SETTINGS[snakeKey];
+        res.json({
+          success: true,
+          data: {
+            key,
+            value: config.type === 'secret' ? '' : config.value,
+            hasValue: !!config.value,
+            type: config.type,
+            description: config.description,
+            updatedAt: null,
+            isDefault: true,
+          },
+        });
+        return;
+      }
+
+      res.status(404).json({
+        success: false,
+        error: `Setting not found: ${key}`,
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        key,
+        value: setting.setting_type === 'secret' && setting.setting_value ? '********' : setting.setting_value,
+        hasValue: !!setting.setting_value,
+        type: setting.setting_type,
+        description: setting.description,
+        updatedAt: setting.updated_at,
+      },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * POST /api/test-monitor/app-settings/test-flowise
+ * Test the production Flowise endpoint from app settings
+ */
+export async function testProductionFlowiseConnection(
+  _req: Request,
+  res: Response,
+  _next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    db = getTestAgentDbWritable();
+
+    // Get endpoint and API key from settings
+    const endpointSetting = db.prepare(`
+      SELECT setting_value FROM app_settings WHERE setting_key = 'flowise_production_url'
+    `).get() as any;
+    const apiKeySetting = db.prepare(`
+      SELECT setting_value FROM app_settings WHERE setting_key = 'flowise_production_api_key'
+    `).get() as any;
+
+    const endpoint = endpointSetting?.setting_value || DEFAULT_APP_SETTINGS.flowise_production_url.value;
+    const apiKey = apiKeySetting?.setting_value || '';
+
+    if (!endpoint) {
+      res.json({
+        success: true,
+        data: {
+          success: false,
+          message: 'No Flowise endpoint configured',
+        },
+      });
+      return;
+    }
+
+    // Build headers
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (apiKey) {
+      headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+
+    // Test connection
+    const startTime = Date.now();
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ question: 'Hello' }),
+    });
+
+    const responseTimeMs = Date.now() - startTime;
+
+    if (response.ok) {
+      res.json({
+        success: true,
+        data: {
+          success: true,
+          message: 'Production Flowise endpoint is reachable',
+          responseTimeMs,
+          endpoint,
+        },
+      });
+    } else {
+      const errorText = await response.text();
+      res.json({
+        success: true,
+        data: {
+          success: false,
+          message: `HTTP ${response.status}: ${errorText.substring(0, 200)}`,
+          responseTimeMs,
+          endpoint,
+        },
+      });
+    }
+  } catch (error: any) {
+    res.json({
+      success: true,
+      data: {
+        success: false,
+        message: `Connection failed: ${error.message}`,
+      },
+    });
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * POST /api/test-monitor/app-settings/test-langfuse
+ * Test the Langfuse connection using saved app settings
+ */
+export async function testLangfuseFromSettings(
+  _req: Request,
+  res: Response,
+  _next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    db = getTestAgentDbWritable();
+
+    // Get Langfuse settings
+    const hostSetting = db.prepare(`
+      SELECT setting_value FROM app_settings WHERE setting_key = 'langfuse_host'
+    `).get() as any;
+    const publicKeySetting = db.prepare(`
+      SELECT setting_value FROM app_settings WHERE setting_key = 'langfuse_public_key'
+    `).get() as any;
+    const secretKeySetting = db.prepare(`
+      SELECT setting_value FROM app_settings WHERE setting_key = 'langfuse_secret_key'
+    `).get() as any;
+
+    const host = hostSetting?.setting_value || DEFAULT_APP_SETTINGS.langfuse_host.value;
+    const publicKey = publicKeySetting?.setting_value || DEFAULT_APP_SETTINGS.langfuse_public_key.value;
+    const secretKey = secretKeySetting?.setting_value || '';
+
+    if (!host || !publicKey || !secretKey) {
+      res.json({
+        success: true,
+        data: {
+          success: false,
+          message: 'Langfuse credentials not fully configured. Please set host, public key, and secret key.',
+        },
+      });
+      return;
+    }
+
+    // Normalize host URL
+    const normalizedHost = host.endsWith('/') ? host.slice(0, -1) : host;
+
+    // Build Basic Auth header
+    const authString = Buffer.from(`${publicKey}:${secretKey}`).toString('base64');
+    const headers: Record<string, string> = {
+      'Authorization': `Basic ${authString}`,
+      'Content-Type': 'application/json',
+    };
+
+    // Test connection by fetching traces with limit=1
+    const startTime = Date.now();
+    const response = await fetch(`${normalizedHost}/api/public/traces?limit=1`, {
+      method: 'GET',
+      headers,
+    });
+
+    const responseTimeMs = Date.now() - startTime;
+
+    if (response.ok) {
+      res.json({
+        success: true,
+        data: {
+          success: true,
+          message: 'Langfuse connection successful',
+          responseTimeMs,
+          host: normalizedHost,
+        },
+      });
+    } else {
+      const errorText = await response.text();
+      res.json({
+        success: true,
+        data: {
+          success: false,
+          message: `HTTP ${response.status}: ${errorText.substring(0, 200)}`,
+          responseTimeMs,
+          host: normalizedHost,
+        },
+      });
+    }
+  } catch (error: any) {
+    res.json({
+      success: true,
+      data: {
+        success: false,
+        message: `Connection failed: ${error.message}`,
+      },
+    });
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * GET /api/test-monitor/app-settings/langfuse-config
+ * Get Langfuse configuration (unmasked) for internal use by hooks/scripts
+ * This returns the actual values, not masked, for use by automation
+ */
+export async function getLangfuseConfig(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    db = getTestAgentDbWritable();
+
+    // Get Langfuse settings
+    const hostSetting = db.prepare(`
+      SELECT setting_value FROM app_settings WHERE setting_key = 'langfuse_host'
+    `).get() as any;
+    const publicKeySetting = db.prepare(`
+      SELECT setting_value FROM app_settings WHERE setting_key = 'langfuse_public_key'
+    `).get() as any;
+    const secretKeySetting = db.prepare(`
+      SELECT setting_value FROM app_settings WHERE setting_key = 'langfuse_secret_key'
+    `).get() as any;
+
+    res.json({
+      success: true,
+      data: {
+        host: hostSetting?.setting_value || DEFAULT_APP_SETTINGS.langfuse_host.value,
+        publicKey: publicKeySetting?.setting_value || DEFAULT_APP_SETTINGS.langfuse_public_key.value,
+        secretKey: secretKeySetting?.setting_value || '',
+      },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+// ============================================================================
+// FLOWISE CONFIGURATION PROFILES API
+// ============================================================================
+
+/**
+ * Helper to migrate existing app_settings to flowise_configs if needed
+ */
+function ensureFlowiseConfigsMigrated(db: BetterSqlite3.Database): void {
+  const existingConfigs = db.prepare('SELECT COUNT(*) as count FROM flowise_configs').get() as any;
+
+  if (existingConfigs.count === 0) {
+    // Migrate from app_settings
+    const urlSetting = db.prepare(`
+      SELECT setting_value FROM app_settings WHERE setting_key = 'flowise_production_url'
+    `).get() as any;
+    const apiKeySetting = db.prepare(`
+      SELECT setting_value FROM app_settings WHERE setting_key = 'flowise_production_api_key'
+    `).get() as any;
+
+    const url = urlSetting?.setting_value || DEFAULT_APP_SETTINGS.flowise_production_url.value;
+    const apiKey = apiKeySetting?.setting_value || '';
+
+    if (url) {
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT INTO flowise_configs (name, url, api_key, is_default, created_at, updated_at)
+        VALUES (?, ?, ?, 1, ?, ?)
+      `).run('Production', url, apiKey, now, now);
+    }
+  }
+}
+
+/**
+ * Helper to migrate existing app_settings to langfuse_configs if needed
+ */
+function ensureLangfuseConfigsMigrated(db: BetterSqlite3.Database): void {
+  const existingConfigs = db.prepare('SELECT COUNT(*) as count FROM langfuse_configs').get() as any;
+
+  if (existingConfigs.count === 0) {
+    // Migrate from app_settings
+    const hostSetting = db.prepare(`
+      SELECT setting_value FROM app_settings WHERE setting_key = 'langfuse_host'
+    `).get() as any;
+    const publicKeySetting = db.prepare(`
+      SELECT setting_value FROM app_settings WHERE setting_key = 'langfuse_public_key'
+    `).get() as any;
+    const secretKeySetting = db.prepare(`
+      SELECT setting_value FROM app_settings WHERE setting_key = 'langfuse_secret_key'
+    `).get() as any;
+
+    const host = hostSetting?.setting_value || DEFAULT_APP_SETTINGS.langfuse_host.value;
+    const publicKey = publicKeySetting?.setting_value || DEFAULT_APP_SETTINGS.langfuse_public_key.value;
+    const secretKey = secretKeySetting?.setting_value || '';
+
+    if (host && publicKey) {
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT INTO langfuse_configs (name, host, public_key, secret_key, is_default, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, ?, ?)
+      `).run('Production', host, publicKey, secretKey, now, now);
+    }
+  }
+}
+
+/**
+ * GET /api/test-monitor/flowise-configs
+ * Get all Flowise configuration profiles
+ */
+export async function getFlowiseConfigs(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    db = getTestAgentDbWritable();
+    ensureFlowiseConfigsMigrated(db);
+
+    const configs = db.prepare(`
+      SELECT id, name, url, api_key, is_default, created_at, updated_at
+      FROM flowise_configs
+      ORDER BY is_default DESC, name ASC
+    `).all() as any[];
+
+    res.json({
+      success: true,
+      data: configs.map(c => ({
+        id: c.id,
+        name: c.name,
+        url: c.url,
+        apiKey: c.api_key ? '********' : '',
+        hasApiKey: !!c.api_key,
+        isDefault: !!c.is_default,
+        createdAt: c.created_at,
+        updatedAt: c.updated_at,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * POST /api/test-monitor/flowise-configs
+ * Create a new Flowise configuration profile
+ */
+export async function createFlowiseConfig(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { name, url, apiKey, isDefault } = req.body;
+
+    if (!name || !url) {
+      res.status(400).json({
+        success: false,
+        error: 'Name and URL are required',
+      });
+      return;
+    }
+
+    db = getTestAgentDbWritable();
+    ensureFlowiseConfigsMigrated(db);
+    const now = new Date().toISOString();
+
+    // If setting as default, unset other defaults first
+    if (isDefault) {
+      db.prepare('UPDATE flowise_configs SET is_default = 0').run();
+    }
+
+    const result = db.prepare(`
+      INSERT INTO flowise_configs (name, url, api_key, is_default, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(name, url, apiKey || '', isDefault ? 1 : 0, now, now);
+
+    res.json({
+      success: true,
+      data: {
+        id: result.lastInsertRowid,
+        name,
+        url,
+        hasApiKey: !!apiKey,
+        isDefault: !!isDefault,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+  } catch (error: any) {
+    if (error.message?.includes('UNIQUE constraint failed')) {
+      res.status(400).json({
+        success: false,
+        error: 'A configuration with this name already exists',
+      });
+      return;
+    }
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * PUT /api/test-monitor/flowise-configs/:id
+ * Update a Flowise configuration profile
+ */
+export async function updateFlowiseConfig(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { id } = req.params;
+    const { name, url, apiKey, isDefault } = req.body;
+
+    if (!name || !url) {
+      res.status(400).json({
+        success: false,
+        error: 'Name and URL are required',
+      });
+      return;
+    }
+
+    db = getTestAgentDbWritable();
+    const now = new Date().toISOString();
+
+    // Check if config exists
+    const existing = db.prepare('SELECT id, api_key FROM flowise_configs WHERE id = ?').get(id) as any;
+    if (!existing) {
+      res.status(404).json({
+        success: false,
+        error: 'Configuration not found',
+      });
+      return;
+    }
+
+    // If setting as default, unset other defaults first
+    if (isDefault) {
+      db.prepare('UPDATE flowise_configs SET is_default = 0').run();
+    }
+
+    // Only update api_key if it's not the masked placeholder
+    const newApiKey = apiKey === '********' ? existing.api_key : (apiKey || '');
+
+    db.prepare(`
+      UPDATE flowise_configs
+      SET name = ?, url = ?, api_key = ?, is_default = ?, updated_at = ?
+      WHERE id = ?
+    `).run(name, url, newApiKey, isDefault ? 1 : 0, now, id);
+
+    res.json({
+      success: true,
+      data: {
+        id: Number(id),
+        name,
+        url,
+        hasApiKey: !!newApiKey,
+        isDefault: !!isDefault,
+        updatedAt: now,
+      },
+    });
+  } catch (error: any) {
+    if (error.message?.includes('UNIQUE constraint failed')) {
+      res.status(400).json({
+        success: false,
+        error: 'A configuration with this name already exists',
+      });
+      return;
+    }
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * DELETE /api/test-monitor/flowise-configs/:id
+ * Delete a Flowise configuration profile
+ */
+export async function deleteFlowiseConfig(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { id } = req.params;
+
+    db = getTestAgentDbWritable();
+
+    // Check if config exists and is not the last one
+    const config = db.prepare('SELECT id, is_default FROM flowise_configs WHERE id = ?').get(id) as any;
+    if (!config) {
+      res.status(404).json({
+        success: false,
+        error: 'Configuration not found',
+      });
+      return;
+    }
+
+    const count = db.prepare('SELECT COUNT(*) as count FROM flowise_configs').get() as any;
+    if (count.count <= 1) {
+      res.status(400).json({
+        success: false,
+        error: 'Cannot delete the last configuration. At least one must exist.',
+      });
+      return;
+    }
+
+    db.prepare('DELETE FROM flowise_configs WHERE id = ?').run(id);
+
+    // If we deleted the default, set another as default
+    if (config.is_default) {
+      db.prepare('UPDATE flowise_configs SET is_default = 1 WHERE id = (SELECT MIN(id) FROM flowise_configs)').run();
+    }
+
+    res.json({
+      success: true,
+      data: { message: 'Configuration deleted' },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * POST /api/test-monitor/flowise-configs/:id/set-default
+ * Set a Flowise configuration as the default
+ */
+export async function setFlowiseConfigDefault(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { id } = req.params;
+
+    db = getTestAgentDbWritable();
+    const now = new Date().toISOString();
+
+    // Check if config exists
+    const existing = db.prepare('SELECT id FROM flowise_configs WHERE id = ?').get(id) as any;
+    if (!existing) {
+      res.status(404).json({
+        success: false,
+        error: 'Configuration not found',
+      });
+      return;
+    }
+
+    // Unset all defaults, then set this one
+    db.prepare('UPDATE flowise_configs SET is_default = 0').run();
+    db.prepare('UPDATE flowise_configs SET is_default = 1, updated_at = ? WHERE id = ?').run(now, id);
+
+    res.json({
+      success: true,
+      data: { message: 'Default configuration updated' },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * POST /api/test-monitor/flowise-configs/:id/test
+ * Test connection to a specific Flowise configuration
+ */
+export async function testFlowiseConfig(
+  req: Request,
+  res: Response,
+  _next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { id } = req.params;
+
+    db = getTestAgentDbWritable();
+
+    // Get config
+    const config = db.prepare('SELECT url, api_key FROM flowise_configs WHERE id = ?').get(id) as any;
+    if (!config) {
+      res.status(404).json({
+        success: false,
+        error: 'Configuration not found',
+      });
+      return;
+    }
+
+    // Build headers
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (config.api_key) {
+      headers['Authorization'] = `Bearer ${config.api_key}`;
+    }
+
+    // Test connection
+    const startTime = Date.now();
+    const response = await fetch(config.url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ question: 'Hello' }),
+    });
+
+    const responseTimeMs = Date.now() - startTime;
+
+    if (response.ok) {
+      res.json({
+        success: true,
+        data: {
+          success: true,
+          message: 'Connection successful',
+          responseTimeMs,
+        },
+      });
+    } else {
+      const errorText = await response.text();
+      res.json({
+        success: true,
+        data: {
+          success: false,
+          message: `HTTP ${response.status}: ${errorText.substring(0, 200)}`,
+          responseTimeMs,
+        },
+      });
+    }
+  } catch (error: any) {
+    res.json({
+      success: true,
+      data: {
+        success: false,
+        message: `Connection failed: ${error.message}`,
+      },
+    });
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * GET /api/test-monitor/flowise-configs/active
+ * Get the active (default) Flowise configuration
+ */
+export async function getActiveFlowiseConfig(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    db = getTestAgentDbWritable();
+    ensureFlowiseConfigsMigrated(db);
+
+    const config = db.prepare(`
+      SELECT id, name, url, api_key, is_default, created_at, updated_at
+      FROM flowise_configs
+      WHERE is_default = 1
+    `).get() as any;
+
+    if (!config) {
+      res.json({
+        success: true,
+        data: null,
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id: config.id,
+        name: config.name,
+        url: config.url,
+        apiKey: config.api_key || '',
+        hasApiKey: !!config.api_key,
+        isDefault: true,
+        createdAt: config.created_at,
+        updatedAt: config.updated_at,
+      },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+// ============================================================================
+// LANGFUSE CONFIGURATION PROFILES API
+// ============================================================================
+
+/**
+ * GET /api/test-monitor/langfuse-configs
+ * Get all Langfuse configuration profiles
+ */
+export async function getLangfuseConfigs(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    db = getTestAgentDbWritable();
+    ensureLangfuseConfigsMigrated(db);
+
+    const configs = db.prepare(`
+      SELECT id, name, host, public_key, secret_key, is_default, created_at, updated_at
+      FROM langfuse_configs
+      ORDER BY is_default DESC, name ASC
+    `).all() as any[];
+
+    res.json({
+      success: true,
+      data: configs.map(c => ({
+        id: c.id,
+        name: c.name,
+        host: c.host,
+        publicKey: c.public_key,
+        secretKey: c.secret_key ? '********' : '',
+        hasSecretKey: !!c.secret_key,
+        isDefault: !!c.is_default,
+        createdAt: c.created_at,
+        updatedAt: c.updated_at,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * POST /api/test-monitor/langfuse-configs
+ * Create a new Langfuse configuration profile
+ */
+export async function createLangfuseConfig(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { name, host, publicKey, secretKey, isDefault } = req.body;
+
+    if (!name || !host || !publicKey) {
+      res.status(400).json({
+        success: false,
+        error: 'Name, host, and public key are required',
+      });
+      return;
+    }
+
+    db = getTestAgentDbWritable();
+    ensureLangfuseConfigsMigrated(db);
+    const now = new Date().toISOString();
+
+    // If setting as default, unset other defaults first
+    if (isDefault) {
+      db.prepare('UPDATE langfuse_configs SET is_default = 0').run();
+    }
+
+    const result = db.prepare(`
+      INSERT INTO langfuse_configs (name, host, public_key, secret_key, is_default, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(name, host, publicKey, secretKey || '', isDefault ? 1 : 0, now, now);
+
+    res.json({
+      success: true,
+      data: {
+        id: result.lastInsertRowid,
+        name,
+        host,
+        publicKey,
+        hasSecretKey: !!secretKey,
+        isDefault: !!isDefault,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+  } catch (error: any) {
+    if (error.message?.includes('UNIQUE constraint failed')) {
+      res.status(400).json({
+        success: false,
+        error: 'A configuration with this name already exists',
+      });
+      return;
+    }
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * PUT /api/test-monitor/langfuse-configs/:id
+ * Update a Langfuse configuration profile
+ */
+export async function updateLangfuseConfig(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { id } = req.params;
+    const { name, host, publicKey, secretKey, isDefault } = req.body;
+
+    if (!name || !host || !publicKey) {
+      res.status(400).json({
+        success: false,
+        error: 'Name, host, and public key are required',
+      });
+      return;
+    }
+
+    db = getTestAgentDbWritable();
+    const now = new Date().toISOString();
+
+    // Check if config exists
+    const existing = db.prepare('SELECT id, secret_key FROM langfuse_configs WHERE id = ?').get(id) as any;
+    if (!existing) {
+      res.status(404).json({
+        success: false,
+        error: 'Configuration not found',
+      });
+      return;
+    }
+
+    // If setting as default, unset other defaults first
+    if (isDefault) {
+      db.prepare('UPDATE langfuse_configs SET is_default = 0').run();
+    }
+
+    // Only update secret_key if it's not the masked placeholder
+    const newSecretKey = secretKey === '********' ? existing.secret_key : (secretKey || '');
+
+    db.prepare(`
+      UPDATE langfuse_configs
+      SET name = ?, host = ?, public_key = ?, secret_key = ?, is_default = ?, updated_at = ?
+      WHERE id = ?
+    `).run(name, host, publicKey, newSecretKey, isDefault ? 1 : 0, now, id);
+
+    res.json({
+      success: true,
+      data: {
+        id: Number(id),
+        name,
+        host,
+        publicKey,
+        hasSecretKey: !!newSecretKey,
+        isDefault: !!isDefault,
+        updatedAt: now,
+      },
+    });
+  } catch (error: any) {
+    if (error.message?.includes('UNIQUE constraint failed')) {
+      res.status(400).json({
+        success: false,
+        error: 'A configuration with this name already exists',
+      });
+      return;
+    }
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * DELETE /api/test-monitor/langfuse-configs/:id
+ * Delete a Langfuse configuration profile
+ */
+export async function deleteLangfuseConfig(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { id } = req.params;
+
+    db = getTestAgentDbWritable();
+
+    // Check if config exists and is not the last one
+    const config = db.prepare('SELECT id, is_default FROM langfuse_configs WHERE id = ?').get(id) as any;
+    if (!config) {
+      res.status(404).json({
+        success: false,
+        error: 'Configuration not found',
+      });
+      return;
+    }
+
+    const count = db.prepare('SELECT COUNT(*) as count FROM langfuse_configs').get() as any;
+    if (count.count <= 1) {
+      res.status(400).json({
+        success: false,
+        error: 'Cannot delete the last configuration. At least one must exist.',
+      });
+      return;
+    }
+
+    db.prepare('DELETE FROM langfuse_configs WHERE id = ?').run(id);
+
+    // If we deleted the default, set another as default
+    if (config.is_default) {
+      db.prepare('UPDATE langfuse_configs SET is_default = 1 WHERE id = (SELECT MIN(id) FROM langfuse_configs)').run();
+    }
+
+    res.json({
+      success: true,
+      data: { message: 'Configuration deleted' },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * POST /api/test-monitor/langfuse-configs/:id/set-default
+ * Set a Langfuse configuration as the default
+ */
+export async function setLangfuseConfigDefault(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { id } = req.params;
+
+    db = getTestAgentDbWritable();
+    const now = new Date().toISOString();
+
+    // Check if config exists
+    const existing = db.prepare('SELECT id FROM langfuse_configs WHERE id = ?').get(id) as any;
+    if (!existing) {
+      res.status(404).json({
+        success: false,
+        error: 'Configuration not found',
+      });
+      return;
+    }
+
+    // Unset all defaults, then set this one
+    db.prepare('UPDATE langfuse_configs SET is_default = 0').run();
+    db.prepare('UPDATE langfuse_configs SET is_default = 1, updated_at = ? WHERE id = ?').run(now, id);
+
+    res.json({
+      success: true,
+      data: { message: 'Default configuration updated' },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * POST /api/test-monitor/langfuse-configs/:id/test
+ * Test connection to a specific Langfuse configuration
+ */
+export async function testLangfuseConfig(
+  req: Request,
+  res: Response,
+  _next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { id } = req.params;
+
+    db = getTestAgentDbWritable();
+
+    // Get config
+    const config = db.prepare('SELECT host, public_key, secret_key FROM langfuse_configs WHERE id = ?').get(id) as any;
+    if (!config) {
+      res.status(404).json({
+        success: false,
+        error: 'Configuration not found',
+      });
+      return;
+    }
+
+    if (!config.secret_key) {
+      res.json({
+        success: true,
+        data: {
+          success: false,
+          message: 'Secret key is required to test connection',
+        },
+      });
+      return;
+    }
+
+    // Normalize host URL
+    const normalizedHost = config.host.endsWith('/') ? config.host.slice(0, -1) : config.host;
+
+    // Build Basic Auth header
+    const authString = Buffer.from(`${config.public_key}:${config.secret_key}`).toString('base64');
+    const headers: Record<string, string> = {
+      'Authorization': `Basic ${authString}`,
+      'Content-Type': 'application/json',
+    };
+
+    // Test connection
+    const startTime = Date.now();
+    const response = await fetch(`${normalizedHost}/api/public/traces?limit=1`, {
+      method: 'GET',
+      headers,
+    });
+
+    const responseTimeMs = Date.now() - startTime;
+
+    if (response.ok) {
+      res.json({
+        success: true,
+        data: {
+          success: true,
+          message: 'Connection successful',
+          responseTimeMs,
+        },
+      });
+    } else {
+      const errorText = await response.text();
+      res.json({
+        success: true,
+        data: {
+          success: false,
+          message: `HTTP ${response.status}: ${errorText.substring(0, 200)}`,
+          responseTimeMs,
+        },
+      });
+    }
+  } catch (error: any) {
+    res.json({
+      success: true,
+      data: {
+        success: false,
+        message: `Connection failed: ${error.message}`,
+      },
+    });
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * GET /api/test-monitor/langfuse-configs/active
+ * Get the active (default) Langfuse configuration (unmasked for internal use)
+ */
+export async function getActiveLangfuseConfig(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    db = getTestAgentDbWritable();
+    ensureLangfuseConfigsMigrated(db);
+
+    const config = db.prepare(`
+      SELECT id, name, host, public_key, secret_key, is_default, created_at, updated_at
+      FROM langfuse_configs
+      WHERE is_default = 1
+    `).get() as any;
+
+    if (!config) {
+      res.json({
+        success: true,
+        data: null,
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id: config.id,
+        name: config.name,
+        host: config.host,
+        publicKey: config.public_key,
+        secretKey: config.secret_key || '',
+        hasSecretKey: !!config.secret_key,
+        isDefault: true,
+        createdAt: config.created_at,
+        updatedAt: config.updated_at,
+      },
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    db?.close();
+  }
+}
+
+// ============================================================================
+// TEST RUN CLEANUP ENDPOINTS
+// ============================================================================
+
+import * as testRunCleanupService from '../services/testRunCleanupService';
+
+/**
+ * GET /api/test-monitor/cleanup/status
+ * Get cleanup service status and running tests
+ */
+export async function getCleanupStatus(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const status = testRunCleanupService.getCleanupStatus();
+
+    res.json({
+      success: true,
+      data: status,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/test-monitor/cleanup/stale
+ * Manually trigger cleanup of stale running tests
+ */
+export async function triggerStaleCleanup(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { maxDurationMinutes } = req.body;
+    const result = testRunCleanupService.cleanupStaleRuns(maxDurationMinutes);
+
+    res.json({
+      success: true,
+      data: {
+        cleanedUp: result.count,
+        runIds: result.runIds,
+        reason: result.reason,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/test-monitor/runs/:runId/abort
+ * Mark a specific test run as aborted
+ */
+export async function abortTestRun(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { runId } = req.params;
+    const { reason } = req.body;
+
+    const abortReason = reason || 'Manually aborted by user';
+    const success = testRunCleanupService.markRunAsAbandoned(runId, abortReason);
+
+    if (success) {
+      res.json({
+        success: true,
+        message: `Test run ${runId} marked as aborted`,
+        data: { runId, reason: abortReason },
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        error: `Test run ${runId} not found or not in running status`,
+      });
+    }
   } catch (error) {
     next(error);
   }

@@ -18,6 +18,9 @@ export type { CardProps, CardHeaderProps, CardBodyProps, CardFooterProps } from 
 export { Modal, ModalFooter } from './Modal';
 export type { ModalProps, ModalFooterProps } from './Modal';
 
+export { ConfirmationModal } from './ConfirmationModal';
+export type { ConfirmationModalProps, ConfirmationVariant } from './ConfirmationModal';
+
 export { Table } from './Table';
 export type { TableProps } from './Table';
 

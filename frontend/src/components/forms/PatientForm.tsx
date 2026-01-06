@@ -65,7 +65,11 @@ export function PatientForm({
     () =>
       locations.map((loc) => ({
         value: loc.guid,
-        label: loc.name || 'Unknown Location',
+        label: loc.address?.city && loc.address?.state
+          ? `${loc.name} (${loc.address.city}, ${loc.address.state})`
+          : loc.address?.city
+          ? `${loc.name} (${loc.address.city})`
+          : (loc.name || 'Unknown Location'),
       })),
     [locations]
   );

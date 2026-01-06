@@ -147,7 +147,7 @@ const PatientListFormatter = ({ data }: { data: unknown }) => {
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200 dark:divide-gray-600">
-          {patients.slice(0, 10).map((p, i) => {
+          {patients.map((p, i) => {
             const guid = p.patientGUID || p.PatientGUID || '';
             return (
               <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700">
@@ -169,7 +169,7 @@ const PatientListFormatter = ({ data }: { data: unknown }) => {
           })}
         </tbody>
       </table>
-      {patients.length > 10 && <div className="text-xs text-gray-500 mt-2">Showing 10 of {patients.length} patients</div>}
+      <div className="text-xs text-gray-500 mt-2">Showing {patients.length} patients</div>
     </div>
   );
 };
@@ -229,7 +229,7 @@ const SlotsFormatter = ({ data }: { data: unknown }) => {
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200 dark:divide-gray-600">
-          {slots.slice(0, 10).map((slot, i) => {
+          {slots.map((slot, i) => {
             const [date, ...timeParts] = (slot.StartTime || '').split(' ');
             return (
               <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700">
@@ -242,7 +242,7 @@ const SlotsFormatter = ({ data }: { data: unknown }) => {
           })}
         </tbody>
       </table>
-      {slots.length > 10 && <div className="text-xs text-gray-500 mt-2">Showing 10 of {slots.length} slots</div>}
+      <div className="text-xs text-gray-500 mt-2">Showing {slots.length} slots</div>
     </div>
   );
 };
@@ -255,7 +255,7 @@ const GroupedSlotsFormatter = ({ data }: { data: unknown }) => {
   return (
     <div className="space-y-2">
       <div className="text-xs text-gray-500">{result.totalGroups || groups.length} slot groups found</div>
-      {groups.slice(0, 5).map((group, i) => (
+      {groups.map((group, i) => (
         <div key={i} className="p-2 bg-gray-50 dark:bg-gray-700 rounded text-sm">
           <div className="font-medium">{group.day} {group.date}</div>
           <div className="text-gray-600 dark:text-gray-300">
@@ -283,7 +283,7 @@ const AppointmentsFormatter = ({ data }: { data: unknown }) => {
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200 dark:divide-gray-600">
-          {appts.slice(0, 10).map((a, i) => {
+          {appts.map((a, i) => {
             const apptGuid = a.AppointmentGUID || a.appointmentGUID || a.GUID || '';
             return (
               <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700">
@@ -331,7 +331,7 @@ const LocationFormatter = ({ data }: { data: unknown }) => {
 
   return (
     <div className="space-y-2">
-      {locations.slice(0, 5).map((loc, i) => {
+      {locations.map((loc, i) => {
         const locGuid = loc.LocationGUID || loc.locationGUID || loc.LocGUID || '';
         const locName = loc.LocationName || loc.locationName || loc.LocName || 'Location';
         const locAddr = loc.LocAddress || loc.Address || '';
@@ -444,7 +444,7 @@ const Cloud9RecordsFormatter = ({ data }: { data: unknown }) => {
     <div className="overflow-x-auto">
       <div className="text-xs text-gray-500 mb-2">{records.length} record(s) found</div>
       <div className="space-y-2">
-        {records.slice(0, 10).map((record, i) => (
+        {records.map((record, i) => (
           <div key={i} className="p-2 bg-gray-50 dark:bg-gray-700 rounded text-xs">
             {Object.entries(record).map(([key, value]) => (
               <div key={key} className="flex items-center gap-1 group">
@@ -460,7 +460,94 @@ const Cloud9RecordsFormatter = ({ data }: { data: unknown }) => {
           </div>
         ))}
       </div>
-      {records.length > 10 && <div className="text-xs text-gray-500 mt-2">Showing 10 of {records.length} records</div>}
+      <div className="text-xs text-gray-500 mt-2">Showing {records.length} records</div>
+    </div>
+  );
+};
+
+// Locations with Search Filter Formatter
+const LocationsWithSearchFormatter = ({ data }: { data: unknown }) => {
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const result = data as { status?: string; records?: Record<string, string>[]; error?: string };
+  if (result?.error) {
+    return <div className="text-red-600 text-sm">{result.error}</div>;
+  }
+  const allRecords = result?.records || [];
+  if (!allRecords.length) return <div className="text-gray-500 italic">No locations found</div>;
+
+  // Filter records by search query (search in any field containing the query)
+  const filteredRecords = searchQuery.trim()
+    ? allRecords.filter(record => {
+        const query = searchQuery.toLowerCase();
+        return Object.values(record).some(value =>
+          value && value.toLowerCase().includes(query)
+        );
+      })
+    : allRecords;
+
+  // Get all unique keys from records for display
+  const allKeys = [...new Set(allRecords.flatMap(r => Object.keys(r)))];
+  const keyFields = allKeys.filter(k => k.toLowerCase().includes('guid') || k.toLowerCase().includes('id'));
+
+  return (
+    <div className="overflow-x-auto">
+      {/* Search Input */}
+      <div className="mb-3">
+        <input
+          type="text"
+          placeholder="Search locations..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg
+                     bg-white dark:bg-gray-800 text-gray-900 dark:text-white
+                     placeholder-gray-400 dark:placeholder-gray-500
+                     focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+        />
+      </div>
+
+      {/* Results count */}
+      <div className="text-xs text-gray-500 mb-2">
+        {searchQuery ? (
+          <span>Showing {filteredRecords.length} of {allRecords.length} locations</span>
+        ) : (
+          <span>{allRecords.length} location(s) found</span>
+        )}
+      </div>
+
+      {/* No results message */}
+      {filteredRecords.length === 0 && searchQuery && (
+        <div className="text-gray-500 italic text-sm py-2">
+          No locations match "{searchQuery}"
+        </div>
+      )}
+
+      {/* Location records - showing all fields like Cloud9RecordsFormatter */}
+      <div className="space-y-2">
+        {filteredRecords.map((record, i) => (
+          <div key={i} className="p-2 bg-gray-50 dark:bg-gray-700 rounded text-xs">
+            {Object.entries(record).map(([key, value]) => (
+              <div key={key} className="flex items-center gap-1 group">
+                <span className="text-gray-400 w-32 shrink-0 truncate">{key}:</span>
+                <span className={keyFields.includes(key) ? 'font-mono' : ''}>{value || 'N/A'}</span>
+                {keyFields.includes(key) && value && (
+                  <span className="opacity-0 group-hover:opacity-100 transition-opacity">
+                    <CopyButton value={value} size="xs" />
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+
+      <div className="text-xs text-gray-500 mt-2">
+        {searchQuery ? (
+          <span>Filtered: {filteredRecords.length} of {allRecords.length}</span>
+        ) : (
+          <span>Showing {allRecords.length} records</span>
+        )}
+      </div>
     </div>
   );
 };
@@ -526,7 +613,7 @@ const CLOUD9_ENDPOINTS: Cloud9EndpointConfig[] = [
     category: 'reference',
     description: 'Get all practice locations',
     sampleParams: { showDeleted: 'False' },
-    formatResult: (data) => <Cloud9RecordsFormatter data={data} />
+    formatResult: (data) => <LocationsWithSearchFormatter data={data} />
   },
   // Write Operations
   {

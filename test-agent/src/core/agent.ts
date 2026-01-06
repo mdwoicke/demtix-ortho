@@ -2,6 +2,7 @@
  * Main Test Agent Orchestrator
  * Coordinates test execution, analysis, and reporting
  * Supports parallel execution with configurable concurrency
+ * Enhanced with Langfuse tracing for comprehensive observability
  */
 
 import { EventEmitter } from 'events';
@@ -15,6 +16,12 @@ import { ConsoleReporter } from '../reporters/console-reporter';
 import { MarkdownReporter } from '../reporters/markdown-reporter';
 import { TestCase, TestContext } from '../tests/test-case';
 import { allScenarios } from '../tests/scenarios';
+import {
+  getLangfuseService,
+  runWithTrace,
+  createTraceContext,
+  scoreTestRun,
+} from '../../../shared/services';
 
 export interface AgentOptions {
   category?: 'happy-path' | 'edge-case' | 'error-handling';
@@ -52,14 +59,15 @@ export interface TestSuiteResult {
 }
 
 export class TestAgent extends EventEmitter {
-  private flowiseClient: FlowiseClient;
+  private flowiseClient!: FlowiseClient;
   private cloud9Client: Cloud9Client;
-  private testRunner: TestRunner;
+  private testRunner!: TestRunner;
   private analyzer: ResponseAnalyzer;
   private recommendationEngine: RecommendationEngine;
   private database: Database;
   private consoleReporter: ConsoleReporter;
   private markdownReporter: MarkdownReporter;
+  private initialized: boolean = false;
 
   // Worker status tracking
   private workerStatuses: Map<number, WorkerStatus> = new Map();
@@ -73,26 +81,43 @@ export class TestAgent extends EventEmitter {
 
   constructor() {
     super();
-    this.flowiseClient = new FlowiseClient();
     this.cloud9Client = new Cloud9Client();
     this.analyzer = new ResponseAnalyzer();
     this.recommendationEngine = new RecommendationEngine();
     this.database = new Database();
     this.consoleReporter = new ConsoleReporter();
     this.markdownReporter = new MarkdownReporter();
+  }
+
+  /**
+   * Initialize the Flowise client with active configuration from settings
+   */
+  private async initializeFlowiseClient(): Promise<void> {
+    if (this.initialized) return;
+
+    // Get Flowise client from active settings
+    this.flowiseClient = await FlowiseClient.forActiveConfig();
+    console.log(`[TestAgent] Initialized with endpoint: ${this.flowiseClient.getEndpoint().substring(0, 60)}...`);
+
     this.testRunner = new TestRunner(
       this.flowiseClient,
       this.cloud9Client,
       this.analyzer,
       this.database
     );
+
+    this.initialized = true;
   }
 
   /**
    * Run the full test suite or filtered tests
    * Supports parallel execution with configurable concurrency
+   * Includes Langfuse trace lifecycle management for observability
    */
   async run(options: AgentOptions = {}): Promise<TestSuiteResult> {
+    // Initialize Flowise client with active config from settings
+    await this.initializeFlowiseClient();
+
     const concurrency = Math.min(Math.max(options.concurrency || 1, 1), 10);
 
     console.log('\n=== E2E Test Agent Starting ===\n');
@@ -118,6 +143,36 @@ export class TestAgent extends EventEmitter {
     // Create test run record
     const runId = this.database.createTestRun();
 
+    // Initialize Langfuse trace for this run
+    const langfuse = getLangfuseService();
+    let trace: any = null;
+
+    if (await langfuse.ensureInitialized()) {
+      try {
+        trace = await langfuse.createTrace({
+          name: `test-run-${runId}`,
+          sessionId: runId,
+          userId: 'test-agent',
+          metadata: {
+            totalTests: scenarios.length,
+            concurrency,
+            category: options.category,
+            scenario: options.scenario,
+            failedOnly: options.failedOnly,
+            environment: process.env.NODE_ENV || 'development',
+          },
+          tags: [
+            process.env.NODE_ENV || 'development',
+            `concurrency-${concurrency}`,
+            options.category || 'all-categories',
+          ],
+        });
+        console.log(`[TestAgent] Langfuse trace created: ${trace?.id || 'unknown'}`);
+      } catch (e: any) {
+        console.warn(`[TestAgent] Langfuse trace creation failed: ${e.message}`);
+      }
+    }
+
     // Initialize progress tracking
     this.progress = {
       total: scenarios.length,
@@ -130,16 +185,29 @@ export class TestAgent extends EventEmitter {
     // Emit execution started event
     this.emit('execution-started', { runId, config: { concurrency } });
 
-    // Run tests
+    // Run tests within trace context
     const startTime = Date.now();
     let results: TestResult[];
 
-    if (concurrency === 1) {
-      // Sequential execution (original behavior)
-      results = await this.runSequential(scenarios, runId);
+    // Create trace context for propagation
+    const traceContext = trace ? createTraceContext(trace.id, runId) : null;
+
+    // Execute tests with or without trace context
+    const executeTests = async () => {
+      if (concurrency === 1) {
+        // Sequential execution (original behavior)
+        return this.runSequential(scenarios, runId);
+      } else {
+        // Parallel execution with worker pool
+        return this.runParallel(scenarios, runId, concurrency);
+      }
+    };
+
+    // Run with trace context if available
+    if (traceContext) {
+      results = await runWithTrace(traceContext, executeTests);
     } else {
-      // Parallel execution with worker pool
-      results = await this.runParallel(scenarios, runId, concurrency);
+      results = await executeTests();
     }
 
     const duration = Date.now() - startTime;
@@ -157,6 +225,32 @@ export class TestAgent extends EventEmitter {
 
     // Update run record
     this.database.completeTestRun(runId, summary);
+
+    // Score the test run in Langfuse
+    if (trace) {
+      try {
+        // Map TestResult[] to TestResultForScoring[] for Langfuse scoring
+        const resultsForScoring = results.map(r => ({
+          passed: r.status === 'passed',
+          status: r.status,
+          durationMs: r.durationMs,
+          transcript: r.transcript?.map(t => ({ responseTimeMs: t.responseTimeMs })),
+          findings: r.findings,
+          errorMessage: r.errorMessage,
+        }));
+        await scoreTestRun(trace.id, resultsForScoring);
+        console.log(`[TestAgent] Langfuse scores submitted for trace ${trace.id}`);
+      } catch (e: any) {
+        console.warn(`[TestAgent] Langfuse scoring failed: ${e.message}`);
+      }
+    }
+
+    // Flush Langfuse traces
+    try {
+      await langfuse.flush();
+    } catch (e: any) {
+      console.warn(`[TestAgent] Langfuse flush failed: ${e.message}`);
+    }
 
     // Emit execution completed event
     this.emit('execution-completed', { runId, summary });
@@ -263,7 +357,8 @@ export class TestAgent extends EventEmitter {
     const results: TestResult[] = [];
 
     // Create per-worker FlowiseClient and TestRunner to ensure session isolation
-    const workerFlowiseClient = new FlowiseClient();
+    // Uses active config from settings with API key support
+    const workerFlowiseClient = await FlowiseClient.forActiveConfig();
     const workerTestRunner = new TestRunner(
       workerFlowiseClient,
       this.cloud9Client,  // Cloud9Client can be shared (stateless HTTP client)

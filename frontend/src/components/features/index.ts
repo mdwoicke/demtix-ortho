@@ -11,3 +11,6 @@ export * from './appointments';
 
 // Dashboard features
 export * from './dashboard';
+
+// Settings features
+export * from './settings';
