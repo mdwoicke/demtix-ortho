@@ -437,7 +437,7 @@ export class LangfuseTraceService {
     } else {
       // Create new session
       this.db.prepare(`
-        INSERT INTO production_sessions (
+        INSERT OR REPLACE INTO production_sessions (
           session_id, langfuse_config_id, user_id, environment,
           first_trace_at, last_trace_at, trace_count,
           total_cost, total_latency_ms, input_preview,
@@ -536,7 +536,10 @@ export class LangfuseTraceService {
         (SELECT COUNT(*) FROM production_trace_observations pto
          WHERE pto.trace_id = pt.trace_id
          AND (pto.level = 'ERROR'
-              OR (pto.output LIKE '%"success":false%' AND pto.output LIKE '%_debug_error%'))) as error_count
+              OR (pto.output LIKE '%"success"%' AND pto.output LIKE '%false%')
+              OR pto.output LIKE '%_debug_error%'
+              OR pto.output LIKE '%"error":%'
+              OR pto.status_message LIKE '%error%')) as error_count
       FROM production_traces pt
       JOIN langfuse_configs lc ON pt.langfuse_config_id = lc.id
       WHERE ${whereClause}
@@ -629,7 +632,10 @@ export class LangfuseTraceService {
          WHERE pt.session_id = ps.session_id
            AND pt.langfuse_config_id = ps.langfuse_config_id
            AND (pto.level = 'ERROR'
-                OR (pto.output LIKE '%"success":false%' AND pto.output LIKE '%_debug_error%'))) as error_count
+              OR (pto.output LIKE '%"success"%' AND pto.output LIKE '%false%')
+              OR pto.output LIKE '%_debug_error%'
+              OR pto.output LIKE '%"error":%'
+              OR pto.status_message LIKE '%error%')) as error_count
       FROM production_sessions ps
       JOIN langfuse_configs lc ON ps.langfuse_config_id = lc.id
       WHERE ${whereClause}
@@ -713,7 +719,8 @@ export class LangfuseTraceService {
     let sessionsCreated = 0;
     let tracesUpdated = 0;
 
-    const SESSION_GAP_MS = 30 * 60 * 1000; // 30 minutes - gap larger than this starts new conversation
+    const SESSION_GAP_MS = 60 * 1000; // 60 seconds - gap larger than this starts new conversation
+    const MAX_CONVERSATION_MS = 5 * 60 * 1000; // 5 minutes max conversation duration for anonymous traces
 
     // Clear existing sessions for the config (or all if no config specified)
     if (configId) {
@@ -746,6 +753,7 @@ export class LangfuseTraceService {
     let currentConfigId: number | null = null;
     let lastTraceTime: Date | null = null;
     let currentConversationId: string | null = null;
+    let conversationStartTime: Date | null = null;
 
     for (const trace of allTraces) {
       const traceTime = new Date(trace.started_at);
@@ -760,14 +768,16 @@ export class LangfuseTraceService {
         userId !== currentUserId ||
         cfgId !== currentConfigId ||
         !lastTraceTime ||
-        (traceTime.getTime() - lastTraceTime.getTime() > SESSION_GAP_MS);
+        (traceTime.getTime() - lastTraceTime.getTime() > SESSION_GAP_MS) ||
+        (!trace.user_id && conversationStartTime && (traceTime.getTime() - conversationStartTime.getTime() > MAX_CONVERSATION_MS));
 
       if (shouldStartNewConversation) {
         // Generate a new conversation ID based on user + first trace timestamp
-        currentConversationId = `conv_${userId}_${traceTime.getTime()}`;
+        currentConversationId = `conv_${cfgId}_${userId}_${traceTime.getTime()}`;
         currentUserId = userId;
         currentConfigId = cfgId;
         conversationGroups.set(currentConversationId, []);
+        conversationStartTime = traceTime;
       }
 
       // Add trace to current conversation
@@ -791,7 +801,7 @@ export class LangfuseTraceService {
 
       // Create session record
       this.db.prepare(`
-        INSERT INTO production_sessions (
+        INSERT OR REPLACE INTO production_sessions (
           session_id, langfuse_config_id, user_id, environment,
           first_trace_at, last_trace_at, trace_count,
           total_cost, total_latency_ms, input_preview

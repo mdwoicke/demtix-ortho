@@ -8032,7 +8032,7 @@ export async function importProductionTraces(
   let db: BetterSqlite3.Database | null = null;
 
   try {
-    const { configId, fromDate, toDate } = req.body;
+    const { configId, fromDate, toDate, refreshObservations } = req.body;
 
     if (!configId || !fromDate) {
       res.status(400).json({
@@ -8049,6 +8049,7 @@ export async function importProductionTraces(
       configId: parseInt(configId),
       fromDate,
       toDate,
+      refreshObservations: refreshObservations === true,
     });
 
     res.json({ success: true, data: result });

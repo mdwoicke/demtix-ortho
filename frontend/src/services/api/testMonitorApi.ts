@@ -1341,11 +1341,13 @@ export async function getProductionTrace(traceId: string): Promise<ProductionTra
 
 /**
  * Import traces from Langfuse
+ * @param options.refreshObservations - If true, re-fetch observations for existing traces (useful for getting updated error counts)
  */
 export async function importProductionTraces(options: {
   configId: number;
   fromDate: string;
   toDate?: string;
+  refreshObservations?: boolean;
 }): Promise<ImportResult> {
   const response = await post<TestMonitorApiResponse<ImportResult>>(
     '/test-monitor/production-calls/import',

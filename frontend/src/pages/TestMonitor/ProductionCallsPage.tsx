@@ -106,15 +106,60 @@ const Icons = {
       <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
     </svg>
   ),
+  Copy: () => (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+    </svg>
+  ),
 };
+
+// ============================================================================
+// TIMEZONE CONSTANTS
+// ============================================================================
+
+interface TimezoneOption {
+  value: string;
+  label: string;
+  abbrev: string;
+}
+
+const US_TIMEZONES: TimezoneOption[] = [
+  { value: 'America/New_York', label: 'Eastern Time', abbrev: 'ET' },
+  { value: 'America/Chicago', label: 'Central Time', abbrev: 'CT' },
+  { value: 'America/Denver', label: 'Mountain Time', abbrev: 'MT' },
+  { value: 'America/Los_Angeles', label: 'Pacific Time', abbrev: 'PT' },
+  { value: 'America/Anchorage', label: 'Alaska Time', abbrev: 'AKT' },
+  { value: 'America/Honolulu', label: 'Hawaii Time', abbrev: 'HT' },
+  { value: 'UTC', label: 'UTC', abbrev: 'UTC' },
+];
+
+const TIMEZONE_STORAGE_KEY = 'productionCalls_timezone';
+
+function getStoredTimezone(): string {
+  try {
+    const stored = localStorage.getItem(TIMEZONE_STORAGE_KEY);
+    if (stored && US_TIMEZONES.some(tz => tz.value === stored)) {
+      return stored;
+    }
+  } catch {
+    // Ignore localStorage errors
+  }
+  // Default to user's local timezone if it matches a US timezone, otherwise Eastern
+  const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (US_TIMEZONES.some(tz => tz.value === localTz)) {
+    return localTz;
+  }
+  return 'America/New_York';
+}
 
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 
-function formatDate(dateString: string): string {
+function formatDateWithTimezone(dateString: string, timezone: string): string {
   const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', {
+  return date.toLocaleString('en-US', {
+    timeZone: timezone,
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
@@ -140,18 +185,41 @@ function getDateDaysAgo(days: number): string {
   return date.toISOString().split('T')[0];
 }
 
+function calculateSessionSpanSeconds(firstTraceAt: string, lastTraceAt: string): number | null {
+  try {
+    const first = new Date(firstTraceAt).getTime();
+    const last = new Date(lastTraceAt).getTime();
+    if (isNaN(first) || isNaN(last)) return null;
+    return Math.round((last - first) / 1000);
+  } catch {
+    return null;
+  }
+}
+
+function formatSpanDuration(seconds: number | null): string {
+  if (seconds === null) return '-';
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (mins < 60) return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  const remainingMins = mins % 60;
+  return remainingMins > 0 ? `${hrs}h ${remainingMins}m` : `${hrs}h`;
+}
+
 // ============================================================================
 // TRACE MODAL COMPONENT
 // ============================================================================
 
 interface TraceModalProps {
   traceId: string;
+  timezone: string;
   onClose: () => void;
 }
 
 type TraceModalTab = 'transcript' | 'performance';
 
-function TraceModal({ traceId, onClose }: TraceModalProps) {
+function TraceModal({ traceId, timezone, onClose }: TraceModalProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [traceDetail, setTraceDetail] = useState<ProductionTraceDetail | null>(null);
@@ -200,7 +268,7 @@ function TraceModal({ traceId, onClose }: TraceModalProps) {
             </h2>
             {traceDetail && (
               <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
-                <span>{formatDate(traceDetail.trace.startedAt)}</span>
+                <span>{formatDateWithTimezone(traceDetail.trace.startedAt, timezone)}</span>
                 {traceDetail.trace.sessionId && (
                   <span className="font-mono text-xs">{traceDetail.trace.sessionId.slice(0, 8)}...</span>
                 )}
@@ -305,16 +373,95 @@ function TraceModal({ traceId, onClose }: TraceModalProps) {
 interface SessionModalProps {
   sessionId: string;
   configId?: number;
+  timezone: string;
   onClose: () => void;
 }
 
 type SessionModalTab = 'transcript' | 'performance' | 'traces';
 
-function SessionModal({ sessionId, configId, onClose }: SessionModalProps) {
+function SessionModal({ sessionId, configId, timezone, onClose }: SessionModalProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sessionDetail, setSessionDetail] = useState<ProductionSessionDetailResponse | null>(null);
   const [activeTab, setActiveTab] = useState<SessionModalTab>('transcript');
+  const [copied, setCopied] = useState(false);
+
+  // Copy all session data to clipboard
+  const handleCopyAll = async () => {
+    if (!sessionDetail) return;
+
+    const { session, transcript, traces, apiCalls } = sessionDetail;
+    const tzInfo = US_TIMEZONES.find(tz => tz.value === timezone) || US_TIMEZONES[0];
+
+    // Build formatted text
+    let text = `PRODUCTION CALL - SESSION DETAILS\n`;
+    text += `${'='.repeat(60)}\n\n`;
+
+    // Session info
+    text += `Session ID: ${session.sessionId}\n`;
+    text += `Messages: ${session.traceCount}\n`;
+    text += `First Message: ${formatDateWithTimezone(session.firstTraceAt, timezone)} (${tzInfo.abbrev})\n`;
+    text += `Last Message: ${formatDateWithTimezone(session.lastTraceAt, timezone)} (${tzInfo.abbrev})\n`;
+    if (session.totalLatencyMs) {
+      text += `Total Latency: ${formatDuration(session.totalLatencyMs)}\n`;
+    }
+    if (session.totalCost) {
+      text += `Total Cost: ${formatCost(session.totalCost)}\n`;
+    }
+
+    text += `\n${'='.repeat(60)}\n`;
+    text += `CONVERSATION TRANSCRIPT\n`;
+    text += `${'='.repeat(60)}\n\n`;
+
+    // Transcript
+    for (const entry of transcript) {
+      const role = entry.role.toUpperCase();
+      text += `[${role}]\n`;
+      text += `${entry.content}\n\n`;
+    }
+
+    // API Calls if any
+    if (apiCalls && apiCalls.length > 0) {
+      text += `${'='.repeat(60)}\n`;
+      text += `API CALLS (${apiCalls.length})\n`;
+      text += `${'='.repeat(60)}\n\n`;
+
+      for (const call of apiCalls) {
+        text += `${call.name || 'API Call'}\n`;
+        text += `  Status: ${call.statusCode || '-'}\n`;
+        text += `  Duration: ${formatDuration(call.durationMs)}\n`;
+        if (call.input) {
+          text += `  Input: ${typeof call.input === 'string' ? call.input : JSON.stringify(call.input, null, 2)}\n`;
+        }
+        if (call.output) {
+          text += `  Output: ${typeof call.output === 'string' ? call.output : JSON.stringify(call.output, null, 2)}\n`;
+        }
+        text += '\n';
+      }
+    }
+
+    // Individual traces
+    text += `${'='.repeat(60)}\n`;
+    text += `INDIVIDUAL TRACES (${traces.length})\n`;
+    text += `${'='.repeat(60)}\n\n`;
+
+    for (let i = 0; i < traces.length; i++) {
+      const trace = traces[i];
+      text += `#${i + 1} - ${trace.name || 'Trace'}\n`;
+      text += `  Trace ID: ${trace.traceId}\n`;
+      text += `  Timestamp: ${formatDateWithTimezone(trace.startedAt, timezone)} (${tzInfo.abbrev})\n`;
+      text += `  Duration: ${formatDuration(trace.latencyMs)}\n`;
+      text += `  Cost: ${formatCost(trace.totalCost)}\n\n`;
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
 
   useEffect(() => {
     async function fetchSession() {
@@ -374,12 +521,29 @@ function SessionModal({ sessionId, configId, onClose }: SessionModalProps) {
               </div>
             )}
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
-          >
-            <Icons.X />
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Copy All Button */}
+            {sessionDetail && (
+              <button
+                onClick={handleCopyAll}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                  copied
+                    ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                }`}
+                title="Copy entire session to clipboard"
+              >
+                {copied ? <Icons.Check /> : <Icons.Copy />}
+                {copied ? 'Copied!' : 'Copy All'}
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
+            >
+              <Icons.X />
+            </button>
+          </div>
         </div>
 
         {/* Tab Navigation */}
@@ -472,7 +636,7 @@ function SessionModal({ sessionId, configId, onClose }: SessionModalProps) {
                   {sessionDetail.traces.map((trace, idx) => (
                     <tr key={trace.traceId}>
                       <td className="px-4 py-2 text-sm text-gray-900 dark:text-white">
-                        #{idx + 1} - {formatDate(trace.startedAt)}
+                        #{idx + 1} - {formatDateWithTimezone(trace.startedAt, timezone)}
                       </td>
                       <td className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">
                         {trace.name || '-'}
@@ -504,6 +668,7 @@ type ViewMode = 'sessions' | 'traces';
 export default function ProductionCallsPage() {
   // State
   const [viewMode, setViewMode] = useState<ViewMode>('sessions');
+  const [timezone, setTimezone] = useState<string>(getStoredTimezone);
   const [configs, setConfigs] = useState<LangfuseConfigProfile[]>([]);
   const [selectedConfigId, setSelectedConfigId] = useState<number | null>(null);
   const [fromDate, setFromDate] = useState(getDateDaysAgo(7));
@@ -531,6 +696,24 @@ export default function ProductionCallsPage() {
 
   // Check if any filters are active
   const hasActiveFilters = filterFromDate || filterToDate || filterSessionId;
+
+  // Get current timezone info
+  const currentTimezoneInfo = US_TIMEZONES.find(tz => tz.value === timezone) || US_TIMEZONES[0];
+
+  // Helper function to format dates with current timezone
+  const formatDate = useCallback((dateString: string): string => {
+    return formatDateWithTimezone(dateString, timezone);
+  }, [timezone]);
+
+  // Handle timezone change
+  const handleTimezoneChange = (newTimezone: string) => {
+    setTimezone(newTimezone);
+    try {
+      localStorage.setItem(TIMEZONE_STORAGE_KEY, newTimezone);
+    } catch {
+      // Ignore localStorage errors
+    }
+  };
 
   // Load Langfuse configs
   const reloadConfigs = useCallback(async (preserveSelection = true) => {
@@ -720,7 +903,7 @@ export default function ProductionCallsPage() {
     }
   };
 
-  // Import since last import
+  // Import since last import (also refreshes observations for existing traces to update error counts)
   const handleImportLatest = async () => {
     if (!selectedConfigId || !lastImportDate) return;
 
@@ -730,6 +913,7 @@ export default function ProductionCallsPage() {
       const result = await importProductionTraces({
         configId: selectedConfigId,
         fromDate: lastImportDate,
+        refreshObservations: true,  // Re-fetch observations to update error counts
       });
 
       if (result.status === 'completed') {
@@ -864,36 +1048,56 @@ export default function ProductionCallsPage() {
             )}
           </div>
 
-          {/* View Mode Toggle */}
-          <div className="flex items-center gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-            <span className="text-sm text-gray-600 dark:text-gray-400">View:</span>
-            <div className="inline-flex rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden">
-              <button
-                onClick={() => setViewMode('sessions')}
-                className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                  viewMode === 'sessions'
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'
-                }`}
-              >
-                Conversations
-              </button>
-              <button
-                onClick={() => setViewMode('traces')}
-                className={`px-3 py-1.5 text-sm font-medium transition-colors border-l border-gray-200 dark:border-gray-600 ${
-                  viewMode === 'traces'
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'
-                }`}
-              >
-                Individual Traces
-              </button>
+          {/* View Mode Toggle and Timezone */}
+          <div className="flex items-center justify-between gap-4 pt-2 border-t border-gray-200 dark:border-gray-700">
+            {/* View Mode Toggle */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600 dark:text-gray-400">View:</span>
+              <div className="inline-flex rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden">
+                <button
+                  onClick={() => setViewMode('sessions')}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                    viewMode === 'sessions'
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'
+                  }`}
+                >
+                  Conversations
+                </button>
+                <button
+                  onClick={() => setViewMode('traces')}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors border-l border-gray-200 dark:border-gray-600 ${
+                    viewMode === 'traces'
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'
+                  }`}
+                >
+                  Individual Traces
+                </button>
+              </div>
+              <span className="text-xs text-gray-400 dark:text-gray-500">
+                {viewMode === 'sessions'
+                  ? 'Grouped by session (full conversations)'
+                  : 'Individual API calls'}
+              </span>
             </div>
-            <span className="text-xs text-gray-400 dark:text-gray-500">
-              {viewMode === 'sessions'
-                ? 'Grouped by session (full conversations)'
-                : 'Individual API calls'}
-            </span>
+
+            {/* Timezone Selector */}
+            <div className="flex items-center gap-2">
+              <Icons.Clock />
+              <span className="text-sm text-gray-600 dark:text-gray-400">Timezone:</span>
+              <select
+                value={timezone}
+                onChange={(e) => handleTimezoneChange(e.target.value)}
+                className="block px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                {US_TIMEZONES.map(tz => (
+                  <option key={tz.value} value={tz.value}>
+                    {tz.label} ({tz.abbrev})
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {/* Import Status */}
@@ -1176,7 +1380,7 @@ export default function ProductionCallsPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
-                        {formatDuration(session.totalLatencyMs)}
+                        {formatSpanDuration(calculateSessionSpanSeconds(session.firstTraceAt, session.lastTraceAt))}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                         {formatCost(session.totalCost)}
@@ -1359,6 +1563,7 @@ export default function ProductionCallsPage() {
       {selectedTraceId && (
         <TraceModal
           traceId={selectedTraceId}
+          timezone={timezone}
           onClose={() => setSelectedTraceId(null)}
         />
       )}
@@ -1368,6 +1573,7 @@ export default function ProductionCallsPage() {
         <SessionModal
           sessionId={selectedSessionId}
           configId={selectedConfigId || undefined}
+          timezone={timezone}
           onClose={() => setSelectedSessionId(null)}
         />
       )}
