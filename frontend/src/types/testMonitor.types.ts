@@ -1084,3 +1084,136 @@ export interface ProductionSessionDetailResponse {
   transcript: ConversationTurn[];
   apiCalls: any[];
 }
+
+// ============================================================================
+// Trace Insights Types
+// ============================================================================
+
+/**
+ * Issue detail with occurrence count and related session IDs
+ */
+export interface TraceIssue {
+  count: number;
+  sessionIds: string[];
+  description: string;
+}
+
+/**
+ * API error breakdown by HTTP status code
+ */
+export interface ApiErrorBreakdown {
+  http502: number;
+  http500: number;
+  other: number;
+}
+
+/**
+ * Session length category with count and range description
+ */
+export interface SessionLengthCategory {
+  count: number;
+  range: string;
+  sessionIds: string[];
+}
+
+/**
+ * Cost analysis by session type
+ */
+export interface SessionTypeCost {
+  count: number;
+  avgCost: number;
+  totalCost: number;
+  sessionIds: string[];
+}
+
+/**
+ * Tool call statistics
+ */
+export interface ToolCallStats {
+  count: number;
+  avgLatencyMs: number;
+}
+
+/**
+ * Complete trace insights response
+ */
+export interface TraceInsightsResponse {
+  timeframe: {
+    fromDate: string;
+    toDate: string;
+    daysCount: number;
+  };
+
+  overview: {
+    totalTraces: number;
+    totalSessions: number;
+    totalObservations: number;
+    successfulBookings: number;
+    patientsCreated: number;
+    patientToBookingConversion: number;
+    totalCost: number;
+    avgCostPerSession: number;
+  };
+
+  issues: {
+    emptyPatientGuid: TraceIssue & {
+      patientsCreatedInSameTrace: number;
+    };
+    apiErrors: TraceIssue & {
+      breakdown: ApiErrorBreakdown;
+    };
+    slotFetchFailures: TraceIssue & {
+      failureRate: number;
+      totalAttempts: number;
+    };
+    missingSlotData: TraceIssue & {
+      recoveryRate: number;
+      recovered: number;
+      notRecovered: number;
+    };
+    sessionAbandonment: TraceIssue & {
+      rate: number;
+    };
+    excessiveConfirmations: TraceIssue & {
+      avgConfirmations: number;
+      threshold: number;
+    };
+    longSessions: TraceIssue & {
+      avgTurns: number;
+      costImpact: number;
+    };
+  };
+
+  sessionLengthDistribution: {
+    abandoned: SessionLengthCategory;
+    partial: SessionLengthCategory;
+    complete: SessionLengthCategory;
+    long: SessionLengthCategory;
+  };
+
+  costAnalysis: {
+    bySessionType: {
+      abandoned: SessionTypeCost;
+      partial: SessionTypeCost;
+      complete: SessionTypeCost;
+      long: SessionTypeCost;
+    };
+    totalCost: number;
+  };
+
+  toolCallStats: {
+    chordOrthoPatient: ToolCallStats;
+    scheduleAppointmentOrtho: ToolCallStats;
+    currentDateTime: ToolCallStats;
+    handleEscalation: ToolCallStats;
+  };
+
+  escalations: {
+    count: number;
+    sessionIds: string[];
+    reasons: Array<{
+      reason: string;
+      count: number;
+    }>;
+  };
+}

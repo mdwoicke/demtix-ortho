@@ -472,6 +472,9 @@ router.get('/langfuse/session/:sessionId/agent-executor', testMonitorController.
 // GET /api/test-monitor/production-calls - List imported traces
 router.get('/production-calls', testMonitorController.getProductionTraces);
 
+// GET /api/test-monitor/production-calls/insights - Get comprehensive trace insights
+router.get('/production-calls/insights', testMonitorController.getTraceInsights);
+
 // GET /api/test-monitor/production-calls/sessions - List sessions (grouped conversations)
 router.get('/production-calls/sessions', testMonitorController.getProductionSessions);
 

@@ -836,4 +836,387 @@ export class LangfuseTraceService {
 
     return { sessionsCreated, tracesUpdated };
   }
+
+  // ============================================================================
+  // TRACE INSIGHTS
+  // ============================================================================
+
+  /**
+   * Get comprehensive trace insights for a date range
+   */
+  getTraceInsights(configId: number, fromDate: string, toDate: string): any {
+    console.log(`[LangfuseTraceService] Getting insights for config ${configId} from ${fromDate} to ${toDate}`);
+
+    const daysCount = Math.ceil((new Date(toDate).getTime() - new Date(fromDate).getTime()) / (1000 * 60 * 60 * 24));
+
+    // Overview counts
+    const overviewRow = this.db.prepare(`
+      SELECT
+        COUNT(*) as total_traces,
+        COUNT(DISTINCT session_id) as total_sessions,
+        COALESCE(SUM(total_cost), 0) as total_cost
+      FROM production_traces
+      WHERE started_at >= ? AND started_at <= ?
+        AND langfuse_config_id = ?
+    `).get(fromDate, toDate, configId) as any;
+
+    const totalObservations = (this.db.prepare(`
+      SELECT COUNT(*) as cnt
+      FROM production_trace_observations o
+      JOIN production_traces t ON o.trace_id = t.trace_id
+      WHERE t.started_at >= ? AND t.started_at <= ?
+        AND t.langfuse_config_id = ?
+    `).get(fromDate, toDate, configId) as any)?.cnt || 0;
+
+    // Successful bookings
+    const successfulBookings = (this.db.prepare(`
+      SELECT COUNT(*) as cnt
+      FROM production_trace_observations o
+      JOIN production_traces t ON o.trace_id = t.trace_id
+      WHERE o.output LIKE '%Appointment GUID Added%'
+        AND t.started_at >= ? AND t.started_at <= ?
+        AND t.langfuse_config_id = ?
+    `).get(fromDate, toDate, configId) as any)?.cnt || 0;
+
+    // Patients created
+    const patientsCreated = (this.db.prepare(`
+      SELECT COUNT(*) as cnt
+      FROM production_trace_observations o
+      JOIN production_traces t ON o.trace_id = t.trace_id
+      WHERE o.output LIKE '%Patient Added%'
+        AND t.started_at >= ? AND t.started_at <= ?
+        AND t.langfuse_config_id = ?
+    `).get(fromDate, toDate, configId) as any)?.cnt || 0;
+
+    const totalSessions = overviewRow?.total_sessions || 0;
+    const totalCost = overviewRow?.total_cost || 0;
+
+    // ========== ISSUE: Empty patientGUID ==========
+    const emptyGuidSessions = this.db.prepare(`
+      SELECT DISTINCT t.session_id
+      FROM production_trace_observations o
+      JOIN production_traces t ON o.trace_id = t.trace_id
+      WHERE o.name = 'schedule_appointment_ortho'
+        AND o.input LIKE '%"patientGUID":""%'
+        AND t.started_at >= ? AND t.started_at <= ?
+        AND t.langfuse_config_id = ?
+    `).all(fromDate, toDate, configId) as any[];
+
+    // Check how many had patient creation in same trace
+    const emptyGuidWithPatientCreate = (this.db.prepare(`
+      SELECT COUNT(DISTINCT o.trace_id) as cnt
+      FROM production_trace_observations o
+      JOIN production_traces t ON o.trace_id = t.trace_id
+      WHERE o.name = 'schedule_appointment_ortho'
+        AND o.input LIKE '%"patientGUID":""%'
+        AND t.started_at >= ? AND t.started_at <= ?
+        AND t.langfuse_config_id = ?
+        AND EXISTS (
+          SELECT 1 FROM production_trace_observations o2
+          WHERE o2.trace_id = o.trace_id
+            AND o2.output LIKE '%Patient Added%'
+        )
+    `).get(fromDate, toDate, configId) as any)?.cnt || 0;
+
+    // ========== ISSUE: API Errors ==========
+    const apiErrorSessions = this.db.prepare(`
+      SELECT DISTINCT t.session_id, o.output
+      FROM production_trace_observations o
+      JOIN production_traces t ON o.trace_id = t.trace_id
+      WHERE (o.output LIKE '%502%' OR o.output LIKE '%500%')
+        AND o.name = 'schedule_appointment_ortho'
+        AND t.started_at >= ? AND t.started_at <= ?
+        AND t.langfuse_config_id = ?
+    `).all(fromDate, toDate, configId) as any[];
+
+    let http502 = 0, http500 = 0, httpOther = 0;
+    const apiErrorSessionIds = new Set<string>();
+    apiErrorSessions.forEach(row => {
+      if (row.session_id) apiErrorSessionIds.add(row.session_id);
+      if (row.output?.includes('502')) http502++;
+      else if (row.output?.includes('500')) http500++;
+      else httpOther++;
+    });
+
+    // ========== ISSUE: Slot Fetch Failures ==========
+    const slotAttempts = (this.db.prepare(`
+      SELECT COUNT(*) as cnt
+      FROM production_trace_observations o
+      JOIN production_traces t ON o.trace_id = t.trace_id
+      WHERE o.name = 'schedule_appointment_ortho'
+        AND o.input LIKE '%"action":"slots"%'
+        AND t.started_at >= ? AND t.started_at <= ?
+        AND t.langfuse_config_id = ?
+    `).get(fromDate, toDate, configId) as any)?.cnt || 0;
+
+    const slotFailures = this.db.prepare(`
+      SELECT DISTINCT t.session_id
+      FROM production_trace_observations o
+      JOIN production_traces t ON o.trace_id = t.trace_id
+      WHERE o.name = 'schedule_appointment_ortho'
+        AND o.output LIKE '%"success":false%'
+        AND t.started_at >= ? AND t.started_at <= ?
+        AND t.langfuse_config_id = ?
+    `).all(fromDate, toDate, configId) as any[];
+
+    // ========== ISSUE: Missing Slot Data ==========
+    const missingSlotSessions = this.db.prepare(`
+      SELECT DISTINCT t.session_id
+      FROM production_trace_observations o
+      JOIN production_traces t ON o.trace_id = t.trace_id
+      WHERE o.output LIKE '%missing_slot_data%'
+        AND t.started_at >= ? AND t.started_at <= ?
+        AND t.langfuse_config_id = ?
+    `).all(fromDate, toDate, configId) as any[];
+
+    // Check recovery rate
+    let recovered = 0, notRecovered = 0;
+    missingSlotSessions.forEach(row => {
+      const hasBooking = this.db.prepare(`
+        SELECT 1 FROM production_traces t
+        JOIN production_trace_observations o ON t.trace_id = o.trace_id
+        WHERE t.session_id = ?
+          AND o.output LIKE '%Appointment GUID Added%'
+        LIMIT 1
+      `).get(row.session_id);
+      if (hasBooking) recovered++;
+      else notRecovered++;
+    });
+
+    // ========== ISSUE: Session Abandonment (1-3 turns) ==========
+    const abandonedSessions = this.db.prepare(`
+      SELECT session_id
+      FROM production_sessions
+      WHERE trace_count <= 3
+        AND last_trace_at >= ? AND last_trace_at <= ?
+        AND langfuse_config_id = ?
+    `).all(fromDate, toDate, configId) as any[];
+
+    // ========== ISSUE: Excessive Confirmations ==========
+    const excessiveConfirmSessions = this.db.prepare(`
+      SELECT session_id, COUNT(*) as confirm_count
+      FROM production_traces
+      WHERE (output LIKE '%Is that correct%' OR output LIKE '%is that right%')
+        AND started_at >= ? AND started_at <= ?
+        AND langfuse_config_id = ?
+      GROUP BY session_id
+      HAVING COUNT(*) >= 10
+    `).all(fromDate, toDate, configId) as any[];
+
+    const avgConfirmations = excessiveConfirmSessions.length > 0
+      ? excessiveConfirmSessions.reduce((sum, r) => sum + r.confirm_count, 0) / excessiveConfirmSessions.length
+      : 0;
+
+    // ========== ISSUE: Long Sessions (19+ turns) ==========
+    const longSessions = this.db.prepare(`
+      SELECT session_id, trace_count, total_cost
+      FROM production_sessions
+      WHERE trace_count > 18
+        AND last_trace_at >= ? AND last_trace_at <= ?
+        AND langfuse_config_id = ?
+    `).all(fromDate, toDate, configId) as any[];
+
+    const longSessionCostImpact = longSessions.reduce((sum, r) => sum + (r.total_cost || 0), 0);
+    const avgLongSessionTurns = longSessions.length > 0
+      ? longSessions.reduce((sum, r) => sum + r.trace_count, 0) / longSessions.length
+      : 0;
+
+    // ========== Session Length Distribution ==========
+    const sessionDistribution = this.db.prepare(`
+      SELECT
+        CASE
+          WHEN trace_count <= 3 THEN 'abandoned'
+          WHEN trace_count <= 10 THEN 'partial'
+          WHEN trace_count <= 18 THEN 'complete'
+          ELSE 'long'
+        END as category,
+        COUNT(*) as count,
+        COALESCE(AVG(total_cost), 0) as avg_cost,
+        COALESCE(SUM(total_cost), 0) as total_cost,
+        GROUP_CONCAT(session_id) as session_ids
+      FROM production_sessions
+      WHERE last_trace_at >= ? AND last_trace_at <= ?
+        AND langfuse_config_id = ?
+      GROUP BY category
+    `).all(fromDate, toDate, configId) as any[];
+
+    const distMap: Record<string, any> = {};
+    sessionDistribution.forEach(row => {
+      distMap[row.category] = {
+        count: row.count,
+        avgCost: row.avg_cost,
+        totalCost: row.total_cost,
+        sessionIds: row.session_ids ? row.session_ids.split(',') : []
+      };
+    });
+
+    // ========== Tool Call Stats ==========
+    const toolStats = this.db.prepare(`
+      SELECT o.name, COUNT(*) as count, AVG(o.latency_ms) as avg_latency
+      FROM production_trace_observations o
+      JOIN production_traces t ON o.trace_id = t.trace_id
+      WHERE o.name IN ('chord_ortho_patient', 'schedule_appointment_ortho', 'current_date_time', 'chord_handleEscalation')
+        AND t.started_at >= ? AND t.started_at <= ?
+        AND t.langfuse_config_id = ?
+      GROUP BY o.name
+    `).all(fromDate, toDate, configId) as any[];
+
+    const toolStatsMap: Record<string, any> = {};
+    toolStats.forEach(row => {
+      toolStatsMap[row.name] = { count: row.count, avgLatencyMs: row.avg_latency || 0 };
+    });
+
+    // ========== Escalations ==========
+    const escalations = this.db.prepare(`
+      SELECT DISTINCT t.session_id, o.input
+      FROM production_trace_observations o
+      JOIN production_traces t ON o.trace_id = t.trace_id
+      WHERE o.name = 'chord_handleEscalation'
+        AND t.started_at >= ? AND t.started_at <= ?
+        AND t.langfuse_config_id = ?
+    `).all(fromDate, toDate, configId) as any[];
+
+    const escalationReasons: Record<string, number> = {};
+    escalations.forEach(row => {
+      try {
+        const inp = typeof row.input === 'string' ? JSON.parse(row.input) : row.input;
+        const reason = inp?.escalationIntent || 'Unknown';
+        escalationReasons[reason] = (escalationReasons[reason] || 0) + 1;
+      } catch (e) {}
+    });
+
+    // Build response
+    return {
+      timeframe: {
+        fromDate,
+        toDate,
+        daysCount
+      },
+      overview: {
+        totalTraces: overviewRow?.total_traces || 0,
+        totalSessions,
+        totalObservations,
+        successfulBookings,
+        patientsCreated,
+        patientToBookingConversion: patientsCreated > 0
+          ? Math.round((successfulBookings / patientsCreated) * 1000) / 10
+          : 0,
+        totalCost,
+        avgCostPerSession: totalSessions > 0 ? totalCost / totalSessions : 0
+      },
+      issues: {
+        emptyPatientGuid: {
+          count: emptyGuidSessions.length,
+          sessionIds: emptyGuidSessions.map(r => r.session_id).filter(Boolean),
+          description: 'LLM passes empty patientGUID to book_child call',
+          patientsCreatedInSameTrace: emptyGuidWithPatientCreate
+        },
+        apiErrors: {
+          count: apiErrorSessions.length,
+          sessionIds: Array.from(apiErrorSessionIds),
+          description: 'Cloud9 API gateway errors (502/500)',
+          breakdown: { http502, http500, other: httpOther }
+        },
+        slotFetchFailures: {
+          count: slotFailures.length,
+          sessionIds: slotFailures.map(r => r.session_id).filter(Boolean),
+          description: 'Slot fetch returned success:false',
+          failureRate: slotAttempts > 0 ? Math.round((slotFailures.length / slotAttempts) * 1000) / 10 : 0,
+          totalAttempts: slotAttempts
+        },
+        missingSlotData: {
+          count: missingSlotSessions.length,
+          sessionIds: missingSlotSessions.map(r => r.session_id).filter(Boolean),
+          description: 'Booking failed with missing_slot_data error',
+          recoveryRate: (recovered + notRecovered) > 0
+            ? Math.round((recovered / (recovered + notRecovered)) * 1000) / 10
+            : 0,
+          recovered,
+          notRecovered
+        },
+        sessionAbandonment: {
+          count: abandonedSessions.length,
+          sessionIds: abandonedSessions.map(r => r.session_id).filter(Boolean),
+          description: 'Sessions with 1-3 turns (likely abandoned)',
+          rate: totalSessions > 0 ? Math.round((abandonedSessions.length / totalSessions) * 1000) / 10 : 0
+        },
+        excessiveConfirmations: {
+          count: excessiveConfirmSessions.length,
+          sessionIds: excessiveConfirmSessions.map(r => r.session_id).filter(Boolean),
+          description: 'Sessions with 10+ confirmation prompts',
+          avgConfirmations: Math.round(avgConfirmations * 10) / 10,
+          threshold: 10
+        },
+        longSessions: {
+          count: longSessions.length,
+          sessionIds: longSessions.map(r => r.session_id).filter(Boolean),
+          description: 'Sessions with 19+ turns',
+          avgTurns: Math.round(avgLongSessionTurns * 10) / 10,
+          costImpact: longSessionCostImpact
+        }
+      },
+      sessionLengthDistribution: {
+        abandoned: {
+          count: distMap.abandoned?.count || 0,
+          range: '1-3 turns',
+          sessionIds: distMap.abandoned?.sessionIds || []
+        },
+        partial: {
+          count: distMap.partial?.count || 0,
+          range: '4-10 turns',
+          sessionIds: distMap.partial?.sessionIds || []
+        },
+        complete: {
+          count: distMap.complete?.count || 0,
+          range: '11-18 turns',
+          sessionIds: distMap.complete?.sessionIds || []
+        },
+        long: {
+          count: distMap.long?.count || 0,
+          range: '19+ turns',
+          sessionIds: distMap.long?.sessionIds || []
+        }
+      },
+      costAnalysis: {
+        bySessionType: {
+          abandoned: {
+            count: distMap.abandoned?.count || 0,
+            avgCost: distMap.abandoned?.avgCost || 0,
+            totalCost: distMap.abandoned?.totalCost || 0,
+            sessionIds: distMap.abandoned?.sessionIds || []
+          },
+          partial: {
+            count: distMap.partial?.count || 0,
+            avgCost: distMap.partial?.avgCost || 0,
+            totalCost: distMap.partial?.totalCost || 0,
+            sessionIds: distMap.partial?.sessionIds || []
+          },
+          complete: {
+            count: distMap.complete?.count || 0,
+            avgCost: distMap.complete?.avgCost || 0,
+            totalCost: distMap.complete?.totalCost || 0,
+            sessionIds: distMap.complete?.sessionIds || []
+          },
+          long: {
+            count: distMap.long?.count || 0,
+            avgCost: distMap.long?.avgCost || 0,
+            totalCost: distMap.long?.totalCost || 0,
+            sessionIds: distMap.long?.sessionIds || []
+          }
+        },
+        totalCost
+      },
+      toolCallStats: {
+        chordOrthoPatient: toolStatsMap['chord_ortho_patient'] || { count: 0, avgLatencyMs: 0 },
+        scheduleAppointmentOrtho: toolStatsMap['schedule_appointment_ortho'] || { count: 0, avgLatencyMs: 0 },
+        currentDateTime: toolStatsMap['current_date_time'] || { count: 0, avgLatencyMs: 0 },
+        handleEscalation: toolStatsMap['chord_handleEscalation'] || { count: 0, avgLatencyMs: 0 }
+      },
+      escalations: {
+        count: escalations.length,
+        sessionIds: escalations.map(r => r.session_id).filter(Boolean),
+        reasons: Object.entries(escalationReasons).map(([reason, count]) => ({ reason, count }))
+      }
+    };
+  }
 }

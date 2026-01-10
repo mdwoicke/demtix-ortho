@@ -9,6 +9,7 @@ import { Button, Card, Spinner } from '../../components/ui';
 import { TranscriptViewer } from '../../components/features/testMonitor/TranscriptViewer';
 import { PerformanceWaterfall } from '../../components/features/testMonitor/PerformanceWaterfall';
 import { LangfuseConnectionsManager } from '../../components/features/testMonitor/LangfuseConnectionsManager';
+import { TraceInsights } from '../../components/features/testMonitor/TraceInsights';
 import {
   getProductionTraces,
   getProductionTrace,
@@ -26,6 +27,7 @@ import type {
   ImportHistoryEntry,
   ProductionSession,
   ProductionSessionDetailResponse,
+  TraceInsightsResponse,
 } from '../../types/testMonitor.types';
 import type { LangfuseConfigProfile } from '../../types/appSettings.types';
 
@@ -663,7 +665,7 @@ function SessionModal({ sessionId, configId, timezone, onClose }: SessionModalPr
 // MAIN PAGE COMPONENT
 // ============================================================================
 
-type ViewMode = 'sessions' | 'traces';
+type ViewMode = 'sessions' | 'traces' | 'insights';
 
 export default function ProductionCallsPage() {
   // State
@@ -693,6 +695,15 @@ export default function ProductionCallsPage() {
   const [filterSessionId, setFilterSessionId] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [showConnectionsManager, setShowConnectionsManager] = useState(false);
+
+  // Insights filter state (for drill-down from insights view)
+  const [filteredSessionIds, setFilteredSessionIds] = useState<string[] | null>(null);
+  const [activeIssueFilter, setActiveIssueFilter] = useState<string | null>(null);
+  const [activeIssueDescription, setActiveIssueDescription] = useState<string | null>(null);
+
+  // Insights cache state (persists when switching tabs)
+  const [cachedInsights, setCachedInsights] = useState<TraceInsightsResponse | null>(null);
+  const [cachedInsightsLastDays, setCachedInsightsLastDays] = useState<number>(7);
 
   // Check if any filters are active
   const hasActiveFilters = filterFromDate || filterToDate || filterSessionId;
@@ -746,9 +757,12 @@ export default function ProductionCallsPage() {
     reloadConfigs(false);
   }, []);
 
-  // Load last import date when config changes
+  // Load last import date when config changes, and clear insights cache
   useEffect(() => {
     if (!selectedConfigId) return;
+
+    // Clear insights cache when config changes
+    setCachedInsights(null);
 
     async function loadLastImport() {
       try {
@@ -770,19 +784,29 @@ export default function ProductionCallsPage() {
       setError(null);
       const result = await getProductionSessions({
         configId: selectedConfigId,
-        limit: pageSize,
-        offset: page * pageSize,
+        limit: filteredSessionIds ? 100 : pageSize, // Load more when filtering by issue
+        offset: filteredSessionIds ? 0 : page * pageSize,
         fromDate: filterFromDate || undefined,
         toDate: filterToDate || undefined,
       });
-      setSessions(result.sessions);
-      setSessionsTotal(result.total);
+
+      // Filter by specific session IDs if set (from insights drill-down)
+      if (filteredSessionIds && filteredSessionIds.length > 0) {
+        const filtered = result.sessions.filter(s =>
+          filteredSessionIds.includes(s.sessionId)
+        );
+        setSessions(filtered);
+        setSessionsTotal(filtered.length);
+      } else {
+        setSessions(result.sessions);
+        setSessionsTotal(result.total);
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to load sessions');
     } finally {
       setLoading(false);
     }
-  }, [selectedConfigId, page, pageSize, filterFromDate, filterToDate]);
+  }, [selectedConfigId, page, pageSize, filterFromDate, filterToDate, filteredSessionIds]);
 
   // Load traces with filters
   const loadTraces = useCallback(async () => {
@@ -812,10 +836,32 @@ export default function ProductionCallsPage() {
   const loadData = useCallback(() => {
     if (viewMode === 'sessions') {
       loadSessions();
-    } else {
+    } else if (viewMode === 'traces') {
       loadTraces();
     }
+    // insights view doesn't need to load data here - component handles its own loading
   }, [viewMode, loadSessions, loadTraces]);
+
+  // Handler for drill-down from insights view
+  const handleViewIssueSessions = useCallback((sessionIds: string[], issueType: string, description: string) => {
+    setFilteredSessionIds(sessionIds);
+    setActiveIssueFilter(issueType);
+    setActiveIssueDescription(description);
+    setViewMode('sessions'); // Switch to sessions view with filter
+  }, []);
+
+  // Handler for caching insights data
+  const handleInsightsLoaded = useCallback((insights: TraceInsightsResponse, lastDays: number) => {
+    setCachedInsights(insights);
+    setCachedInsightsLastDays(lastDays);
+  }, []);
+
+  // Clear insights filter
+  const clearIssueFilter = useCallback(() => {
+    setFilteredSessionIds(null);
+    setActiveIssueFilter(null);
+    setActiveIssueDescription(null);
+  }, []);
 
   // Rebuild sessions from existing traces
   const handleRebuildSessions = async () => {
@@ -840,6 +886,9 @@ export default function ProductionCallsPage() {
     setFilterFromDate('');
     setFilterToDate('');
     setFilterSessionId('');
+    setFilteredSessionIds(null);
+    setActiveIssueFilter(null);
+    setActiveIssueDescription(null);
     setPage(0);
   };
 
@@ -1074,11 +1123,23 @@ export default function ProductionCallsPage() {
                 >
                   Individual Traces
                 </button>
+                <button
+                  onClick={() => setViewMode('insights')}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors border-l border-gray-200 dark:border-gray-600 ${
+                    viewMode === 'insights'
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'
+                  }`}
+                >
+                  Insights
+                </button>
               </div>
               <span className="text-xs text-gray-400 dark:text-gray-500">
                 {viewMode === 'sessions'
                   ? 'Grouped by session (full conversations)'
-                  : 'Individual API calls'}
+                  : viewMode === 'traces'
+                  ? 'Individual API calls'
+                  : 'Summary metrics and issue analysis'}
               </span>
             </div>
 
@@ -1316,6 +1377,27 @@ export default function ProductionCallsPage() {
           </div>
         )}
 
+        {/* Issue Filter Banner (from Insights drill-down) */}
+        {activeIssueFilter && viewMode === 'sessions' && (
+          <div className="px-4 py-3 bg-purple-50 dark:bg-purple-900/20 border-b border-purple-200 dark:border-purple-800 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm text-purple-700 dark:text-purple-300">
+              <Icons.Filter />
+              <span>Showing sessions with:</span>
+              <span className="px-2 py-0.5 bg-purple-100 dark:bg-purple-800 rounded font-medium">
+                {activeIssueDescription || activeIssueFilter}
+              </span>
+              <span className="text-purple-500 dark:text-purple-400">({sessionsTotal} sessions)</span>
+            </div>
+            <button
+              onClick={clearIssueFilter}
+              className="flex items-center gap-1 px-2 py-1 text-sm text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-200 hover:bg-purple-100 dark:hover:bg-purple-800 rounded transition-colors"
+            >
+              <Icons.XCircle />
+              Clear Filter
+            </button>
+          </div>
+        )}
+
         {/* Sessions Table View */}
         {viewMode === 'sessions' && (
           <div className="overflow-x-auto">
@@ -1531,8 +1613,21 @@ export default function ProductionCallsPage() {
         </div>
         )}
 
-        {/* Pagination */}
-        {totalPages > 1 && (
+        {/* Insights View */}
+        {viewMode === 'insights' && selectedConfigId && (
+          <div className="p-4">
+            <TraceInsights
+              configId={selectedConfigId}
+              onViewSessions={handleViewIssueSessions}
+              cachedInsights={cachedInsights}
+              cachedLastDays={cachedInsightsLastDays}
+              onInsightsLoaded={handleInsightsLoaded}
+            />
+          </div>
+        )}
+
+        {/* Pagination (only for sessions/traces views) */}
+        {viewMode !== 'insights' && totalPages > 1 && (
           <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
             <div className="text-sm text-gray-500 dark:text-gray-400">
               Showing {page * pageSize + 1} to {Math.min((page + 1) * pageSize, currentTotal)} of {currentTotal} {viewMode === 'sessions' ? 'conversations' : 'traces'}

@@ -8400,3 +8400,57 @@ export async function rebuildProductionSessions(
     if (db) db.close();
   }
 }
+
+/**
+ * GET /api/test-monitor/production-calls/insights
+ * Get comprehensive trace insights for a date range
+ */
+export async function getTraceInsights(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  let db: BetterSqlite3.Database | null = null;
+
+  try {
+    const { configId, fromDate, toDate, lastDays } = req.query;
+
+    if (!configId) {
+      res.status(400).json({ success: false, error: 'configId is required' });
+      return;
+    }
+
+    // Calculate date range
+    let from = fromDate as string;
+    let to = (toDate as string) || new Date().toISOString();
+
+    if (lastDays) {
+      const d = new Date();
+      d.setDate(d.getDate() - parseInt(lastDays as string));
+      from = d.toISOString();
+    } else if (!from) {
+      // Default: last 7 days
+      const d = new Date();
+      d.setDate(d.getDate() - 7);
+      from = d.toISOString();
+    }
+
+    db = getTestAgentDbWritable();
+    const service = new LangfuseTraceService(db);
+
+    const insights = service.getTraceInsights(
+      parseInt(configId as string),
+      from,
+      to
+    );
+
+    res.json({
+      success: true,
+      data: insights,
+    });
+  } catch (error) {
+    next(error);
+  } finally {
+    if (db) db.close();
+  }
+}

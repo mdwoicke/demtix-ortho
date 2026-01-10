@@ -37,6 +37,7 @@ import type {
   ProductionSession,
   ProductionSessionsResponse,
   ProductionSessionDetailResponse,
+  TraceInsightsResponse,
 } from '../../types/testMonitor.types';
 
 // Base API URL
@@ -1433,5 +1434,30 @@ export async function rebuildProductionSessions(configId?: number): Promise<{ se
     '/test-monitor/production-calls/sessions/rebuild',
     { configId }
   );
+  return response.data;
+}
+
+// ============================================================================
+// TRACE INSIGHTS API
+// ============================================================================
+
+/**
+ * Get comprehensive trace insights for a date range
+ */
+export async function getTraceInsights(options: {
+  configId: number;
+  fromDate?: string;
+  toDate?: string;
+  lastDays?: number;
+}): Promise<TraceInsightsResponse> {
+  const params = new URLSearchParams();
+  params.append('configId', options.configId.toString());
+  if (options.fromDate) params.append('fromDate', options.fromDate);
+  if (options.toDate) params.append('toDate', options.toDate);
+  if (options.lastDays) params.append('lastDays', options.lastDays.toString());
+
+  const queryString = params.toString();
+  const url = `/test-monitor/production-calls/insights?${queryString}`;
+  const response = await get<TestMonitorApiResponse<TraceInsightsResponse>>(url);
   return response.data;
 }
