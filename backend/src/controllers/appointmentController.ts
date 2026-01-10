@@ -4,6 +4,7 @@ import { Environment, isValidEnvironment } from '../config/cloud9';
 import { AppError, asyncHandler } from '../middleware/errorHandler';
 import { Cloud9Appointment, Cloud9AvailableSlot, Cloud9Location, Cloud9AppointmentType } from '../types/cloud9';
 import { AppointmentModel } from '../models/Appointment';
+import { PatientModel } from '../models/Patient';
 import logger from '../utils/logger';
 
 /**
@@ -29,12 +30,13 @@ function getEnvironment(req: Request): Environment {
 
 /**
  * GET /api/appointments/patient/:patientGuid
- * Get all appointments for a patient
+ * Get all appointments for a patient and their family members (same phone number)
  */
 export const getPatientAppointments = asyncHandler(
   async (req: Request, res: Response) => {
     const environment = getEnvironment(req);
     const { patientGuid } = req.params;
+    const includeFamily = req.query.includeFamily !== 'false'; // Default to true
 
     if (!patientGuid) {
       throw new AppError('Patient GUID is required', 400);
@@ -42,21 +44,13 @@ export const getPatientAppointments = asyncHandler(
 
     const client = createCloud9Client(environment);
 
-    // Fetch appointments, locations, and appointment types from Cloud 9 API in parallel
-    const [appointmentsResponse, locationsResponse, appointmentTypesResponse] = await Promise.all([
-      client.getPatientAppointments(patientGuid),
+    // Fetch reference data in parallel
+    const [locationsResponse, appointmentTypesResponse] = await Promise.all([
       client.getLocations(),
       client.getAppointmentTypes(),
     ]);
 
-    if (appointmentsResponse.status === 'Error' || appointmentsResponse.errorMessage) {
-      throw new AppError(
-        appointmentsResponse.errorMessage || 'Failed to fetch patient appointments',
-        500
-      );
-    }
-
-    // Create a map of location GUID to location data for quick lookup
+    // Create lookup maps for reference data
     const locationMap = new Map<string, Cloud9Location>();
     if (locationsResponse.status === 'Success' && locationsResponse.records) {
       locationsResponse.records.forEach((loc: Cloud9Location) => {
@@ -64,7 +58,6 @@ export const getPatientAppointments = asyncHandler(
       });
     }
 
-    // Create a map of appointment type GUID to appointment type data for quick lookup
     const appointmentTypeMap = new Map<string, Cloud9AppointmentType>();
     if (appointmentTypesResponse.status === 'Success' && appointmentTypesResponse.records) {
       appointmentTypesResponse.records.forEach((type: Cloud9AppointmentType) => {
@@ -72,14 +65,122 @@ export const getPatientAppointments = asyncHandler(
       });
     }
 
+    // Get the primary patient's info to find their phone number
+    const primaryPatientInfo = await client.getPatientInformation(patientGuid);
+    let familyPatientGuids: string[] = [patientGuid];
+
+    // If includeFamily is true, find family members by phone number
+    if (includeFamily && primaryPatientInfo.status === 'Success' && primaryPatientInfo.records.length > 0) {
+      const primaryRecord = primaryPatientInfo.records[0];
+      const phoneNumber = primaryRecord.PatientPhone || primaryRecord.persHomePhone || primaryRecord.persCellPhone || primaryRecord.PhoneNumber;
+
+      logger.info('Patient phone number for family lookup', { patientGuid, phoneNumber: phoneNumber || 'not found' });
+
+      // Save primary patient to local database for future family lookups
+      try {
+        PatientModel.upsert({
+          patient_guid: patientGuid,
+          first_name: primaryRecord.PatientFirstName || primaryRecord.persFirstName || '',
+          last_name: primaryRecord.PatientLastName || primaryRecord.persLastName || '',
+          middle_name: primaryRecord.PatientMiddleName || primaryRecord.persMiddleName,
+          birthdate: primaryRecord.PatientBirthDate || primaryRecord.persBirthDate,
+          gender: primaryRecord.PatientGender || primaryRecord.persGender,
+          email: primaryRecord.PatientEmail || primaryRecord.persUseEmail,
+          phone: phoneNumber,
+          environment,
+        });
+        logger.info('Saved patient to local database for family lookup', { patientGuid });
+      } catch (err) {
+        logger.warn('Failed to save patient to local database', { error: err });
+      }
+
+      if (phoneNumber) {
+        // Look up family members from local database by phone number
+        try {
+          const localFamilyMembers = PatientModel.getByPhone(phoneNumber, environment);
+
+          if (localFamilyMembers.length > 0) {
+            // Get GUIDs from local family members (excluding current patient)
+            const familyGuids = localFamilyMembers
+              .map(p => p.patient_guid)
+              .filter(guid => guid !== patientGuid);
+
+            if (familyGuids.length > 0) {
+              familyPatientGuids = [patientGuid, ...familyGuids];
+
+              logger.info('Found family members by phone from local database', {
+                primaryGuid: patientGuid,
+                phoneNumber,
+                familyCount: familyGuids.length,
+                familyGuids
+              });
+            }
+          } else {
+            logger.info('No family members found in local database (may need to view other family member pages first)', {
+              patientGuid,
+              phoneNumber
+            });
+          }
+        } catch (err) {
+          logger.warn('Failed to search for family members via local database', { error: err });
+        }
+      }
+    }
+
+    // Fetch appointments for all family members in parallel
+    const appointmentPromises = familyPatientGuids.map(guid =>
+      client.getPatientAppointments(guid).catch(err => {
+        logger.warn('Failed to fetch appointments for patient', { guid, error: err });
+        return { status: 'Error', records: [] };
+      })
+    );
+    const appointmentResponses = await Promise.all(appointmentPromises);
+
+    // Combine all appointments
+    const allAppointmentRecords: Cloud9Appointment[] = [];
+    appointmentResponses.forEach(response => {
+      if (response.status === 'Success' && response.records) {
+        allAppointmentRecords.push(...response.records);
+      }
+    });
+
+    // Deduplicate appointments by GUID
+    const uniqueAppointments = Array.from(
+      new Map(allAppointmentRecords.map(appt => [appt.AppointmentGUID, appt])).values()
+    );
+
     // Get local appointment data for scheduled_at timestamps
     const localAppointments = AppointmentModel.getByPatientGuid(patientGuid);
     const localAppointmentMap = new Map(
       localAppointments.map((a) => [a.appointment_guid, a])
     );
 
+    // Get unique patient GUIDs from appointments to fetch their birth dates
+    const uniquePatientGuids = Array.from(new Set(uniqueAppointments.map((appt: Cloud9Appointment) => appt.PatientGUID)));
+
+    // Fetch patient info for each unique patient (in parallel, limited to avoid overload)
+    const patientBirthDateMap = new Map<string, string>();
+    if (uniquePatientGuids.length > 0) {
+      const patientInfoPromises = uniquePatientGuids.slice(0, 10).map(async (guid) => {
+        try {
+          const patientInfo = await client.getPatientInformation(guid);
+          if (patientInfo.status === 'Success' && patientInfo.records.length > 0) {
+            const record = patientInfo.records[0];
+            // Try multiple possible field names for birth date
+            const birthDate = record.PatientBirthDate || record.persBirthDate || record.BirthDate;
+            if (birthDate) {
+              patientBirthDateMap.set(guid, birthDate);
+            }
+          }
+        } catch (err) {
+          logger.warn('Failed to fetch patient info for birth date', { patientGuid: guid, error: err });
+        }
+      });
+      await Promise.all(patientInfoPromises);
+    }
+
     // Transform appointment data with location and appointment type enrichment
-    const appointments = appointmentsResponse.records.map((appt: Cloud9Appointment) => {
+    const appointments = uniqueAppointments.map((appt: Cloud9Appointment) => {
       const localAppt = localAppointmentMap.get(appt.AppointmentGUID);
       const location = appt.LocationGUID ? locationMap.get(appt.LocationGUID) : undefined;
       const appointmentType = appt.AppointmentTypeGUID ? appointmentTypeMap.get(appt.AppointmentTypeGUID) : undefined;
@@ -94,6 +195,7 @@ export const getPatientAppointments = asyncHandler(
         patient_suffix: appt.PatientSuffix,
         patient_greeting: appt.PatientGreeting,
         patient_gender: appt.PatientGender,
+        patient_birth_date: appt.PatientBirthDate || patientBirthDateMap.get(appt.PatientGUID) || null,
         appointment_date_time: appt.AppointmentDateTime,
         appointment_type_guid: appt.AppointmentTypeGUID,
         appointment_type_code: appointmentType?.AppointmentTypeCode || null,
@@ -118,10 +220,18 @@ export const getPatientAppointments = asyncHandler(
       };
     });
 
+    // Sort by appointment date (newest first)
+    appointments.sort((a, b) => {
+      const dateA = new Date(a.appointment_date_time).getTime();
+      const dateB = new Date(b.appointment_date_time).getTime();
+      return dateB - dateA;
+    });
+
     res.json({
       status: 'success',
       data: appointments,
       count: appointments.length,
+      familyMembersIncluded: familyPatientGuids.length > 1,
       environment,
     });
   }

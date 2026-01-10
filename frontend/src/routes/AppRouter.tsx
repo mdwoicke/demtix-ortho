@@ -31,7 +31,7 @@ import {
   TestsPage,
   AnalysisPage,
   SandboxLabPage,
-  ProductionCallsPage,
+  CallTracePage,
 } from '../pages/TestMonitor';
 import { NotFound } from '../pages/NotFound';
 import { ROUTES } from '../utils/constants';
@@ -140,7 +140,7 @@ export function AppRouter() {
             {/* New unified pages (Sprint 2+) */}
             <Route path="tests" element={<TestsPage />} />
             <Route path="analysis" element={<AnalysisPage />} />
-            <Route path="production-calls" element={<ProductionCallsPage />} />
+            <Route path="call-trace" element={<CallTracePage />} />
             <Route path="sandbox-lab" element={<SandboxLabPage />} />
             <Route path="experiments" element={<ABTestingDashboard />} />
             <Route path="cases" element={<TestCasesPage />} />

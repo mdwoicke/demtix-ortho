@@ -111,6 +111,7 @@ export function PatientDetail() {
           appointments={appointments}
           onConfirm={handleConfirmAppointment}
           onCancel={handleCancelAppointment}
+          showPatientName={true}
           isLoading={appointmentsLoading}
           emptyMessage="No appointments scheduled for this patient."
         />

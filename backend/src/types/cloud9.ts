@@ -67,6 +67,7 @@ export interface Cloud9Appointment {
   PatientSuffix?: string;
   PatientGreeting?: string;
   PatientGender?: string;
+  PatientBirthDate?: string;
   AppointmentDateTime: string;
   AppointmentTypeGUID?: string;
   AppointmentTypeCode?: string;

@@ -55,3 +55,6 @@ test-agent/dist/
 # Malformed paths (Windows artifacts)
 *•*
 nul
+
+# Auto Claude data directory
+.auto-claude/

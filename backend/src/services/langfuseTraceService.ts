@@ -635,7 +635,12 @@ export class LangfuseTraceService {
               OR (pto.output LIKE '%"success"%' AND pto.output LIKE '%false%')
               OR pto.output LIKE '%_debug_error%'
               OR pto.output LIKE '%"error":%'
-              OR pto.status_message LIKE '%error%')) as error_count
+              OR pto.status_message LIKE '%error%')) as error_count,
+        (SELECT COUNT(*) > 0 FROM production_trace_observations pto
+         JOIN production_traces pt ON pto.trace_id = pt.trace_id
+         WHERE pt.session_id = ps.session_id
+           AND pt.langfuse_config_id = ps.langfuse_config_id
+           AND pto.output LIKE '%Appointment GUID Added%') as has_successful_booking
       FROM production_sessions ps
       JOIN langfuse_configs lc ON ps.langfuse_config_id = lc.id
       WHERE ${whereClause}

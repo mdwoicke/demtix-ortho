@@ -1063,6 +1063,7 @@ export interface ProductionSession {
   metadata: Record<string, any> | null;
   importedAt: string;
   errorCount: number;
+  hasSuccessfulBooking: boolean;
 }
 
 /**

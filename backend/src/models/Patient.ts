@@ -211,6 +211,47 @@ export class PatientModel {
   }
 
   /**
+   * Get patients by phone number (for family member lookup)
+   */
+  static getByPhone(phone: string, environment: string = 'sandbox'): Patient[] {
+    const db = getDatabase();
+
+    try {
+      // Clean phone number for comparison (remove non-digits, get last 10 digits)
+      const cleanPhone = phone.replace(/\D/g, '').slice(-10);
+
+      if (cleanPhone.length < 10) {
+        return [];
+      }
+
+      // Search for patients with matching phone (also match partial phone endings)
+      const stmt = db.prepare(`
+        SELECT * FROM patients
+        WHERE environment = ?
+        AND phone IS NOT NULL
+        AND phone != ''
+        AND (
+          REPLACE(REPLACE(REPLACE(REPLACE(phone, '-', ''), '(', ''), ')', ''), ' ', '') LIKE '%' || ?
+          OR phone LIKE '%' || ?
+        )
+        ORDER BY last_name ASC, first_name ASC
+      `);
+
+      const patients = stmt.all(environment, cleanPhone, cleanPhone) as Patient[];
+
+      loggers.dbOperation('SELECT BY PHONE', 'patients', { phone: cleanPhone, count: patients.length });
+
+      return patients;
+    } catch (error) {
+      throw new Error(
+        `Error fetching patients by phone: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  /**
    * Delete patient by GUID
    */
   static deleteByGuid(patientGuid: string): void {

@@ -8142,6 +8142,7 @@ function transformSessionRow(row: any): any {
     metadata: row.metadata_json ? JSON.parse(row.metadata_json) : null,
     importedAt: row.imported_at,
     errorCount: row.error_count || 0,
+    hasSuccessfulBooking: Boolean(row.has_successful_booking),
   };
 }
 

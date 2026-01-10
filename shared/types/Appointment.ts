@@ -13,6 +13,7 @@ export interface Appointment {
   patient_suffix?: string;
   patient_greeting?: string;
   patient_gender?: string;
+  patient_birth_date?: string;
   appointment_date_time: string;
   appointment_type_guid?: string;
   appointment_type_description?: string;

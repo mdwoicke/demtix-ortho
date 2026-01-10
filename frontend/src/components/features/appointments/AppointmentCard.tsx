@@ -85,11 +85,16 @@ export function AppointmentCard({
               )}
             </div>
             {showPatientName && patientFullName && (
-              <div className="flex items-center gap-2 text-sm text-gray-700">
+              <div className="flex items-center gap-2 text-sm text-gray-700 flex-wrap">
                 <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white shadow-sm text-xs font-semibold text-gray-600">
                   👤
                 </span>
                 <span className="font-semibold">{patientFullName}</span>
+                {appointment.patient_birth_date && (
+                  <span className="text-xs bg-white px-2 py-1 rounded-full shadow-sm">
+                    DOB: {formatDate(appointment.patient_birth_date, 'MMM d, yyyy')}
+                  </span>
+                )}
                 {appointment.patient_gender && (
                   <span className="text-xs bg-white px-2 py-1 rounded-full shadow-sm">
                     {appointment.patient_gender}

@@ -1,5 +1,5 @@
 /**
- * Production Calls Page
+ * Call Trace Page
  * View and import production conversation traces from Langfuse
  */
 
@@ -111,6 +111,12 @@ const Icons = {
   Copy: () => (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+    </svg>
+  ),
+  CalendarCheck: () => (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 14l2 2 4-4" />
     </svg>
   ),
 };
@@ -667,7 +673,7 @@ function SessionModal({ sessionId, configId, timezone, onClose }: SessionModalPr
 
 type ViewMode = 'sessions' | 'traces' | 'insights';
 
-export default function ProductionCallsPage() {
+export default function CallTracePage() {
   // State
   const [viewMode, setViewMode] = useState<ViewMode>('sessions');
   const [timezone, setTimezone] = useState<string>(getStoredTimezone);
@@ -990,7 +996,7 @@ export default function ProductionCallsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Production Calls"
+        title="Call Trace"
         subtitle="View and import production conversation traces from Langfuse"
       />
 
@@ -1417,10 +1423,13 @@ export default function ProductionCallsPage() {
                     Duration
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    Total Cost
+                    Avg Latency
                   </th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     Tool Errors
+                  </th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                    Booked
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     Last Activity
@@ -1433,13 +1442,13 @@ export default function ProductionCallsPage() {
               <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {loading && sessions.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center">
+                    <td colSpan={9} className="px-4 py-8 text-center">
                       <Spinner size="lg" />
                     </td>
                   </tr>
                 ) : sessions.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                    <td colSpan={9} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                       No conversations found. Import traces from Langfuse to get started.
                     </td>
                   </tr>
@@ -1465,7 +1474,9 @@ export default function ProductionCallsPage() {
                         {formatSpanDuration(calculateSessionSpanSeconds(session.firstTraceAt, session.lastTraceAt))}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
-                        {formatCost(session.totalCost)}
+                        {session.totalLatencyMs && session.traceCount > 0
+                          ? formatDuration(session.totalLatencyMs / session.traceCount)
+                          : '-'}
                       </td>
                       <td className="px-4 py-3 text-center">
                         {session.errorCount > 0 ? (
@@ -1474,6 +1485,16 @@ export default function ProductionCallsPage() {
                             {session.errorCount}
                           </span>
                         ) : null}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {session.hasSuccessfulBooking && (
+                          <span
+                            className="inline-flex items-center justify-center text-green-600 dark:text-green-400"
+                            title="Appointment successfully booked"
+                          >
+                            <Icons.CalendarCheck />
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                         {formatDate(session.lastTraceAt)}
